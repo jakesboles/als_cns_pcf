@@ -60,10 +60,7 @@ for (i in seq_along(files)){
            y = (YMax + YMin) / 2,
            code = ids[i])
   
-  feature_cols <- colnames(tabs[[i]])[str_detect(colnames(tabs[[i]]), "Average.Positive.Intensity")]
-  other_cols <- c("Object.Id", "Region.Area..μm..", "x", "y", "code")
-  
-  tabs[[i]] <- tabs[[i]][, c(other_cols, feature_cols)] %>%
+  tabs[[i]] <- tabs[[i]] %>% 
     mutate(Object.Id = paste0(code, "_", Object.Id)) %>% 
     dplyr::rename("object_id" = "Object.Id",
                   "area" = "Region.Area..μm..")
@@ -71,15 +68,12 @@ for (i in seq_along(files)){
 
 tab <- list_rbind(tabs)
 
-feature_col_names <- str_remove_all(feature_cols, ".Average.Positive.Intensity") %>% 
-  str_replace_all("[..]", "-") %>%
+colnames(tab) <- str_remove_all(colnames(tab), ".Average.Positive.Intensity") %>% 
+  str_replace_all("[..]", "-") %>% 
   str_remove_all("-")
 
-colnames(tab)
-
-colnames(tab) <- c("object.id", "area", "x", "y", "code", feature_col_names)
-
 tab <- tab %>% 
+  dplyr::select(-c(XMin, XMax, YMin, YMax)) %>%
   left_join(key,
             by = "code")
 
