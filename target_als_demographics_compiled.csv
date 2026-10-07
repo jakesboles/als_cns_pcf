@@ -1,0 +1,32 @@
+Case Number,GUID,Race,Sex,Age at Death,age at onset,*Site of Sx Onset,PMI (hours),Fm Hx of ALS/FTD,Clinical Diagnosis,Pathological Diagnosis,C9orf72 mutation,Cause of death,Medical history,Muscle type
+GWF18-31,NEUKN179PH8,White,Female,62,60,limb,3.5,Y,ALS-FTD,"ALS, FTLD-TDP, AD neuropathologic change intermediate",Y,,,psoas
+GWF18-33,NEUYP296MDX,White,Female,62,57,limb,5,N,ALS,ALS,,,,psoas
+GWF19-37,NEUPG876HJT,,Male,81,78,limb,9,,ALS,"ALS, AD neuropathologic change intermediate",,,,psoas
+GWF19-47,NEUUX693YA3,White,Male,59,53,limb,47,,ALS,ALS,,,,psoas
+GWF20-50,NEUBD692FG6,White,Male,67,66,limb,4.5,N,ALS,"ALS, AD neuropathologic change intermediate",,,,psoas
+GWF20-54,NEUKZ647RCA,,Male,54,,,15,,ALS,ALS,,,,psoas
+GWF21-56,NEUVM562WMZ,White,Female,56,53,limb,6,Y,ALS,ALS,Y,,,psoas
+GWF21-58,NEUWH892ZZ5,White,Male,63,62,bulbar/limb,6,Y,ALS-FTD,ALS/AD,Y,,,psoas
+AU-066,,,Female,49,46,Lower Extremity: left lower leg weakness and stiffness,20.2,,ALS,,Y,bilateral panlobar bronchopneumonia,"Increased cholesterol. Appendectomy. Bunion surgery. Sinus surgery, facet syndrome, hypertension",quadriceps
+AU-072,,,Male,49,47,Bulbar,15.19,Y,ALS,,Y,Acute bronchopneumonia (bilateral),,quadriceps
+AU-073,,,Male,64,61,Bulbar (pseudo?),33.3,Y,ALS,,Y,ALS; conornary atherosclerosis ,arthritic neck pain issues,quadriceps
+AU-085,,,Male,62,59,bulbar,15.4,,ALS,,Y,TDP-43 proteinopathy with primary age-related tauopathy; ALS leading to chronic respiratory failure; tracheostomy complications with chromic aspiration pneumonia,"Hypertension, dyslipidemia",psoas
+AU-087,,,Female,72,70,bulbar,5.41,Y,ALS,,Y,,"Rheumatoid fever (age 15), prolapse heart valve (age 16, resolved), squamous cell skin cancer, asthma, hypertension, GERD ",quadriceps
+GBB-16-07,NEUEF856BLV,White,Female,61,60,"Limb,Limb Upper,Limb Upper Right,Arm",7,,ALS,,Y,Complications of ALS,Sleep Apnea,paraspinal muscle
+GBB-17-08,NEUFF179PPT,White,Male,59,50,"Limb,Limb Upper,Limb Upper Left,Limb Upper Right",13,,ALS,,,Complications of ALS,"Atrial fibrillation,Heart Disease,Prostatitis,Splenectomy",abdominal muscle
+GBB-18-07,NEUGU437VNF,White,Female,66,60,"Limb,Limb Upper,Limb Upper Left,Limb Lower,Limb Lower Left,Ankle/foot/toes",26,,ALS,,Y,Complications of ALS,,psoas
+GBB-18-13,NEUGV102NYT,Black/African American,Female,63,,,25,,Control,,,Cardiac arrest,"adult polycystic kidney disease,Coronory artery disease,Diabetes Mellitus Type 2,failed renal transplant,Hypertension,Myocardial infarction,Recurrent DVT",psoas
+GBB-18-17,NEUBE992ZD1,White,Male,68,65,"Limb,Limb Upper,Limb Upper Left,Hand/fingers",15,Y,ALS,,Y,Complications of ALS,"Hypothyroidism,Osteoarthritis,Osteoporosis,Penicillin allergy,Psoriasis,S/P radiation of hypothalamus,S/P tonsillectomy in infancy,S/P vocal cord implants,Sulphonamide allergy",psoas
+GBB-18-19,NEULV114EY9,White,Male,55,52,"Limb,Limb Upper,Limb Upper Left,Limb Lower,Limb Lower Left",15,,ALS,,,Complications of ALS,"Hypertension,Obstructive sleep apnea",psoas
+GBB-21-08,NEURT892HDQ,White,Male,66,64,Hand/fingers,28,Y,ALS,,,Complications of ALS,"Atrial fibrilation, prostate cancer, hyperlipidemia",psoas
+GBB-21-12,NEUWR361HPJ,White,Male,74,70,,22,,ALS,,,Acute respiratory distress,Hypertension,psoas
+GBB-21-27,NEUCF205RL8,White,Female,82,,,27,,Control,,,lymphoma,"diffuse large cell lymphoma, hypertension, Fungal mycosis",psoas
+GBB-22-01,NEUDH441CDB,White,Male,47,,,32,,Control,,,"Short gut syndrome, ventricular tachycardia","Short gut syndrome, post-covid",psoas
+GBB-22-10,NEUMH687NCM,White,Male,65,,,16,,Control,,,Cardio Respiratory Failure,"progressive bilateral weakness, remote road traffic accident in lumbar region (L3 fracture), hypertension, Lyme",psoas
+GBB-22-13,NEUEM656LYE,White,Male,62,,,46,,Control,,,Cardiac respiratory failure,"Diabetes Mellitus, Chronic pancreatitis, pulmonary embolism ",psoas
+GBB-23-11,NEUKJ190JR1,White,Male,62,,,36,,Control,,,Waiting on clinical notes,Waiting on clinical notes,psoas
+GBB-23-12,NEUWH642VP4,White,Male,67,,,35,,Control,,,Cardiac arrest,Hypertension,paraspinal muscle
+GBB-23-14,NEUXA844NJR,White,Female,77,,,19,,Control,,,"Respiratory distress, pulmonary edema","Hypertension, pelivc and sacral fracture after fall, fibrillation",psoas
+GBB-23-16,NEUGN121BVU,Black/African American,Female,55,,,46,,Control,,,Pulmonary Embolism,"Antithrombin III deficiency, deep venous thrombosis",psoas
+GBB-23-19,NEUNV024UK4,White,Male,70,,,58,,Control,,,Cardiac arrest,"Hypertension, Diabetes mellitus, Hyperlipidemia, post stent, metabolic disease",psoas
+GBB-19-13,NEUVM032BF2,,Male,75,,,,,Control,,,,,
