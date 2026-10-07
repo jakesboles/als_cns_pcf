@@ -48,7 +48,12 @@ for (i in seq_along(files)){
   
   message("Task ", i, " out of ", length(files))
   
-  tabs[[i]] <- read.csv(files[i])
+  hdr <- make.names(names(data.table::fread(files[i], nrows = 0)), unique = T)
+  keep <- which(hdr %in% c("Object.Id", "XMin", "XMax", "YMin", "YMax") |
+                  startsWith(hdr, "Region.Area") |
+                  str_detect(hdr, "Average.Positive.Intensity"))
+  
+  tabs[[i]] <- data.table::fread(files[i], select = keep, data.table = F, col.names = hdr[keep])
   
   tabs[[i]] <- tabs[[i]] %>% 
     mutate(x = (XMax + XMin) / 2,
