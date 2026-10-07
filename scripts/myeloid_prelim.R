@@ -3,7 +3,7 @@ library(ggplot2)
 library(janitor)
 library(ggbeeswarm)
 library(ggpubr)
-library(SingleCellExperiment)
+library(SpatialExperiment)
 library(scuttle)
 library(scater)
 library(presto)
@@ -105,21 +105,22 @@ size_lower <- 65
 tab <- tab %>% 
   filter(area > size_lower)
 
-# Prep SCE object ---------------------------------------------------------
-cell_id <- tab$object.id
+# Prep SPE object ---------------------------------------------------------
+cell_id <- tab$object_id
 
 meta <- tab %>% 
-  dplyr::select(c(object.id, area, x, y, code, sample_id, tissue, sex, age, clinical_diagnosis, c9orf72_mutation, group)) %>%
+  dplyr::select(c(object_id, area, x, y, code, sample_id, tissue, sex, age, clinical_diagnosis, c9orf72_mutation, group)) %>%
   mutate(batch = str_split_i(code, "-", i = 1))
 
 counts <- tab %>%
-  dplyr::select(-c(object.id, area, x, y, code, sample_id, tissue, sex, age, clinical_diagnosis, c9orf72_mutation, group)) %>% 
+  dplyr::select(-c(object_id, area, x, y, code, sample_id, tissue, sex, age, clinical_diagnosis, c9orf72_mutation, group)) %>% 
   t()
 
 rownames(meta) <- cell_id -> colnames(counts)
 
-sce <- SingleCellExperiment(assays = list(counts = counts),
-                     colData = meta)
+sce <- SpatialExperiment(assays = list(counts = counts),
+                         colData = meta,
+                         spatialCoordsNames = c("x", "y"))
 
 # sce <- scuttle::logNormCounts(sce)
 # sce
