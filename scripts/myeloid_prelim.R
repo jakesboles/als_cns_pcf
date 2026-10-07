@@ -1,3 +1,4 @@
+dyn.load("/hpc/software/spack/opt/spack/linux-rhel7-x86_64/gcc-4.8.5/libxml2-2.9.10-sbmpowvpmrw3sytyglnc3y6stcfbkg4o/lib/libxml2.so.2", local = F)
 library(tidyverse)
 library(ggplot2)
 library(janitor)
