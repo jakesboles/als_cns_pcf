@@ -9,6 +9,7 @@ library(scater)
 library(presto)
 library(dittoSeq)
 library(harmony)
+library(pheatmap)
 
 setwd("/projects/b1169/boles/als_cns_pcf")
 
@@ -67,6 +68,11 @@ for (i in seq_along(files)){
 
 tab <- list_rbind(tabs)
 
+features <- colnames(tab)[str_detect(colnames(tab), ".Average.Positive.Intensity")] %>%
+  str_remove_all(".Average.Positive.Intensity") %>%
+  str_replace_all("[..]", "-") %>% 
+  str_remove_all("-")
+
 colnames(tab) <- str_remove_all(colnames(tab), ".Average.Positive.Intensity") %>% 
   str_replace_all("[..]", "-") %>% 
   str_remove_all("-")
@@ -101,6 +107,38 @@ tab %>%
 size_lower <- 65
 # size_upper <- 300
 
+# tab %>% 
+#   dplyr::select(c(features, "code")) %>%
+#   pivot_longer(all_of(features),
+#                names_to = "marker") %>%
+#   group_by(code, marker) %>%
+#   summarize(med = median(value)) %>%
+#   ungroup() %>% 
+#   group_by(marker) %>%
+#   mutate(scale = scale(med)[,1]) %>%
+#   ggplot(aes(x = code,
+#              y = marker)) + 
+#   geom_tile(aes(fill = scale)) + 
+#   scale_fill_gradient2()
+#   # ggplot(aes(x = code,
+#   #            y = value)) + 
+#   # geom_violin() + 
+#   # facet_wrap(. ~ marker,
+#   #            scales = "free")
+
+tab %>% 
+  dplyr::select(c(features, "code")) %>% 
+  pivot_longer(all_of(features),
+               names_to = "marker") %>% 
+  group_by(code, marker) %>%
+  summarize(med = median(value)) %>% 
+  ungroup() %>% 
+  pivot_wider(names_from = "marker",
+              values_from = "med") %>%
+  column_to_rownames("code") %>% 
+  as.matrix() %>% 
+  pheatmap(scale = "column")
+
 tab <- tab %>% 
   filter(area > size_lower)
 
@@ -120,6 +158,11 @@ rownames(meta) <- cell_id -> colnames(counts)
 sce <- SpatialExperiment(assays = list(counts = counts),
                          colData = meta,
                          spatialCoordsNames = c("x", "y"))
+
+dittoHeatmap(sce,
+             genes = features,
+             annot.by = "code",
+             assay = "counts")
 
 # Arcsinh transform -------------------------------------------------------
 
@@ -240,7 +283,7 @@ dittoDimPlot(sce,
 
 dittoDimPlot(sce, "area", "HARMONY_UMAP")
 
-dittoDimPlot(sce, "CD74", "HARMONY_UMAP",
+dittoDimPlot(sce, "CD163", "HARMONY_UMAP",
              assay = "asinh")
 
 dittoPlot(sce,
