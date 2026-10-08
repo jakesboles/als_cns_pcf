@@ -5,12 +5,10 @@ library(janitor)
 library(ggbeeswarm)
 library(ggpubr)
 library(SpatialExperiment)
-library(scuttle)
 library(scater)
 library(presto)
 library(dittoSeq)
 library(harmony)
-library(singleCellTK)
 
 setwd("/projects/b1169/boles/als_cns_pcf")
 
@@ -123,28 +121,47 @@ sce <- SpatialExperiment(assays = list(counts = counts),
                          colData = meta,
                          spatialCoordsNames = c("x", "y"))
 
-# sce <- scuttle::logNormCounts(sce)
-# sce
+# Arcsinh transform -------------------------------------------------------
 
-# ComBat ------------------------------------------------------------------
+set.seed(1)
+cof_sub <- assay(sce, "counts")[, sample(ncol(sce), min(ncol(sce), 5e4))]
 
-sce <- runComBatSeq(sce,
-                    "counts",
-                    "code",
-                    assayName = "combat_counts")
+bg_peak <- function(v) {
+  d <- density(log(v[v > 0]), n = 512)
+  pk <- which(diff(sign(diff(d$y))) == -2) + 1
+  pk <- pk[d$y[pk] > 0.05 * max(d$y)]
+  if (!length(pk)) pk <- which.max(d$y)
+  exp(d$x[min(pk)])
+}
 
-sce
+cofactor <- apply(cof_sub, 1, bg_peak)
 
-sce <- scuttle::logNormCounts(sce,
-                              assay.type = "combat_counts",
-                              name = "combat_lognorm")
+# manual overrides, e.g. c(Iba1 = 120)
+cofactor_manual <- c()
+if (length(cofactor_manual)) cofactor[names(cofactor_manual)] <- cofactor_manual
+stopifnot(identical(names(cofactor), rownames(sce)))
+
+as.data.frame(t(cof_sub)) %>% 
+  pivot_longer(everything(), names_to = "marker") %>% 
+  filter(value > 0) %>% 
+  ggplot(aes(x = value)) + 
+  geom_density() + 
+  geom_vline(data = enframe(cofactor, name = "marker", value = "cofactor"),
+             aes(xintercept = cofactor),
+             color = "firebrick") + 
+  scale_x_log10() + 
+  facet_wrap(. ~ marker, scales = "free") + 
+  theme_linedraw(base_size = 8)
+
+assay(sce, "asinh") <- asinh(assay(sce, "counts") / cofactor)
+
 sce
 
 # Dimensional reduction ---------------------------------------------------
 
 sce <- scater::runPCA(sce,
                       scale = T,
-                      exprs_values = "combat_lognorm",
+                      exprs_values = "asinh",
                       subset_row = c("HLAA", "CD68", "CD44", "Vimentin", "CD45", "CD11c",
                                      "TMEM119", "Iba1", "Ki67", "HLADR", "iNOS", "PCNA",
                                      "GPNMB", "H2AX", "CD14", "ApoE", "CD74", "CD163", "Mac2Galectin3",
@@ -224,7 +241,7 @@ dittoDimPlot(sce,
 dittoDimPlot(sce, "area", "HARMONY_UMAP")
 
 dittoDimPlot(sce, "CD74", "HARMONY_UMAP",
-             assay = "combat_lognorm")
+             assay = "asinh")
 
 dittoPlot(sce,
           var = "Iba1",
@@ -236,7 +253,7 @@ dittoPlot(sce,
           var = "Iba1",
           group.by = "code",
           plots = "vlnplot",
-          assay = "combat_counts")
+          assay = "asinh")
 
 dittoPlot(sce,
           var = "area",
@@ -248,12 +265,8 @@ dittoPlot(sce,
 sce$group <- factor(sce$group,
                     levels = c("Control", "sALS", "C9orf72-ALS"))
 
-# sce <- scuttle::logNormCounts(sce,
-#                               assay.type = "counts",
-#                               name = "lognorm")
-
 de <- presto::wilcoxauc(sce, group_by = "group",
-                        assay = "combat_lognorm")
+                        assay = "asinh")
 
 de %>%
   filter(padj < 0.05)
@@ -261,12 +274,12 @@ de %>%
 sals <- presto::wilcoxauc(sce,
                           group_by = "group",
                           groups_use = c("Control", "sALS"),
-                          assay = "combat_lognorm")
+                          assay = "asinh")
 
 c9 <- presto::wilcoxauc(sce,
                         group_by = "group",
                         groups_use = c("Control", "C9orf72-ALS"),
-                        assay = "combat_lognorm")
+                        assay = "asinh")
 
 sals <- sals %>% 
   filter(group == "sALS") %>% 
@@ -321,11 +334,12 @@ meta %>%
              ncol = 1) +
   theme_void()
 
-dittoDimPlot(sce, "CD163")
+dittoDimPlot(sce, "CD163", assay = "asinh")
 # colData(sce)
 # sce
 dittoPlot(sce, "TMEM119", group.by = "group",
-          plots = c("vlnplot", "boxplot")) + 
+          plots = c("vlnplot", "boxplot"),
+          assay = "asinh") + 
   ylab("Normalized intensity") +
   theme(legend.position = "none",
         axis.title.x = element_blank(),

@@ -30,7 +30,7 @@ Phase 1 (current): import HALO object data, annotate objects with spatial contex
 - `sample_key.csv`: slide/section key. `code` = section id (`<run>-<slot>`, e.g. `160-1`), `sample_id` = donor (hyphen-free, e.g. `GBB1607`), `block`, `sn` (section number?), `tissue` (`mcx`/`sc`), `date` (staining run date), unnamed trailing notes column.
 - `target_als_demographics_compiled.csv`: donor demographics (same file as in the Visium repo). `Case Number` has hyphens (`GWF18-31`, `GBB-16-07`, `AU-066`); strip hyphens to join on `sample_id`.
 - `antibody_targets`: one target per line, 70 lines, no header.
-- `scripts/myeloid_prelim.R`, `scripts/pathology_prelim.R`: prototype import → `SingleCellExperiment` → PCA/UMAP/Harmony → presto DE.
+- `scripts/myeloid_prelim.R`, `scripts/pathology_prelim.R`: prototype import → `SpatialExperiment` (myeloid) / `SingleCellExperiment` (pathology) → PCA/UMAP/Harmony → presto DE.
 - `scripts/pathology_summary.R`: % area of pTDP-43 / DPR from HALO summary exports, Wilcoxon by group.
 - Data dirs `myeloid_quant/`, `pathology_quant/` are gitignored; real data lives on Quest at `/projects/b1169/boles/als_cns_pcf`.
 
@@ -53,11 +53,50 @@ Phase 1 (current): import HALO object data, annotate objects with spatial contex
 - **Selective column loading** (`myeloid_prelim.R`, PR 2): HALO exports are read with `data.table::fread(select = ...)` instead of `read.csv()`. The header is read first (`nrows = 0`) and passed through `make.names(unique = T)` so column names are byte-identical to what `read.csv()` produced; downstream code (`Region.Area..μm..`, `*.Average.Positive.Intensity`, the marker-name cleanup) is unchanged. Kept: `Object.Id`, `XMin/XMax/YMin/YMax`, `Region.Area*`, all `*Average.Positive.Intensity`. `fread(select = )` returns columns in **file order**, so nothing downstream may rename columns positionally. `data.table = F` is required because later code sets `rownames()` on a frame derived from `tab`, which data.tables don't support. Called as `data.table::fread` (no `library(data.table)`) to avoid masking dplyr/purrr (`first`, `last`, `between`, `transpose`). Extend to the other scripts once validated on real data.
 - Prototype loops take `feature_cols` from the **last** file read; this assumes every export has identical channel columns in the same order. Worth asserting.
 
-## Methodology notes from prototype scripts (for discussion, not yet acted on)
+## Preprocessing of intensity data
 
-- Myeloid prototype drops objects with area ≤ 65 µm².
-- `runComBatSeq` (count-based, negative binomial) and `logNormCounts` (library-size normalization) are applied to mean intensities. Both assume count data; for MxIF intensities, common choices are arcsinh/log1p transform with per-marker scaling, and Harmony (or nothing) for batch. Raise with the user before changing.
-- Harmony on `code` (section) is the current batch strategy. In the Visium repo the user found CCA beat Harmony; unknown whether that will hold here.
+### Current state (`myeloid_prelim.R`, PR 4)
+- Area filter: objects with area ≤ 65 µm² dropped.
+- `counts` assay = raw HALO mean intensities (the name is a SCE convention; these are not counts). `asinh` assay = `asinh(counts / cofactor)` with a **per-marker** cofactor (see Cofactor selection).
+- ComBat-seq and `logNormCounts` removed (with `library(singleCellTK)`/`library(scuttle)`, whose only uses they were). All downstream `combat_*` references now point at `asinh`. `dittoDimPlot(sce, "CD163")` and the TMEM119 `dittoPlot` previously had no `assay =` and so plotted the dittoSeq default assay (likely raw `counts`, despite the "Normalized intensity" label); they now pass `assay = "asinh"` explicitly.
+- PCA on `asinh` with `scale = T` (per-marker z-scoring, cf. Hickey 2021), Harmony on `code` for the embedding only.
+- presto `logFC` on the `asinh` assay is a difference of mean asinh values (≈ log-ratio for values well above the cofactor).
+
+### Rationale
+- **Why asinh**: intensity distributions are heavily right-skewed. asinh(x/c) is ~linear for x ≪ c and ~log(2x/c) for x ≫ c, so it compresses the bright tail like a log while staying defined and stable at 0/near-background values. Standard in cytometry (Bendall 2011; Nowicka 2017 CyTOF workflow, cofactor 5) and multiplexed imaging (Windhager 2023 IMC protocol, cofactor 1 for IMC counts).
+- **Cofactor is scale-dependent and must be tuned**: c should sit near the background/noise level of each channel so noise is compressed and positive signal is log-scaled. Cytometry's 5 (CyTOF counts) / ~150 (flow) don't transfer to HALO intensities directly. Plan: inspect per-marker raw distributions (e.g. `apply(counts, 1, quantile, c(.5, .9, .99))` or density plots on log scale) and pick a global or per-marker cofactor. Per-marker works as-is: a vector ordered by `rownames(sce)` divides row-wise under R's column-major recycling.
+- **Why drop ComBat-seq**: (1) it models negative-binomial counts (Zhang 2020) and these are continuous intensities; (2) more importantly, it was run with `batch = code`, and every section is one donor in one group, so removing per-section mean differences removes donor/group differences, the signal of interest. Batch correction with batch confounded or unbalanced with group biases downstream group tests (Nygaard 2016).
+- **Why logNormCounts is inappropriate**: library-size factors assume each cell's total is technical (sequencing depth). Summed intensity across 70 unrelated antibodies isn't a depth proxy; dividing by it injects cell-type composition into every marker.
+- **Batch handling going forward**: correct only the embedding (Harmony on PCA, by `code` or staining run) for clustering/neighborhoods; keep expression values uncorrected for group comparisons and model batch/donor in the statistical test instead. Slide-mean scaling (Harris 2022, mxnorm) was best in their evaluation, but in this design one slide = one donor section, so it has the same confounding problem as ComBat-by-`code`.
+
+### Cofactor selection (`myeloid_prelim.R`, PR 4)
+- Per marker, cofactor = the **background (lowest) peak** of the raw intensity distribution: density of `log(intensity)` on a fixed random subsample of 50k cells (`set.seed(1)`, for speed), local maxima above 5% of the max density, take the lowest. asinh is ~linear below the cofactor and ~log above it, so this squashes background and log-scales true signal.
+- **One cofactor per marker across all sections** (not per section/run). A per-section cofactor would act as per-section normalization, which is confounded with donor/group (see ComBat rationale above).
+- `cofactor_manual` (named vector) overrides individual markers after visual review; `stopifnot()` guards order/names before the transform. The faceted density plot (log10 x-axis, red line = cofactor) is the review tool: the line should sit on the negative/background peak, left of any positive population.
+- **Main caveat**: the method needs a negative population in the data. The myeloid prelim export is (presumably) myeloid objects only, so ubiquitous myeloid markers (Iba1, CD68, ...) may have no negative peak and the estimate lands on the positive peak, over-compressing real variation. Fix by manual override, or by estimating cofactors once all cell types are loaded (the eventual whole-tissue object is the right place to set final cofactors).
+- Data-driven alternative if this is unsatisfying: flowVS (Azad 2016) picks per-channel asinh cofactors by maximizing variance homogeneity across populations (Bartlett's test).
+
+### Proposed full pipeline (not yet implemented; for discussion)
+1. QC: drop failed sections (`162-6`, `162-8`); area filter; DAPI-low / extreme-area objects (segmentation artifacts); optionally clip per-marker at the 99.9th percentile per section to tame hot pixels/debris.
+2. Transform: `asinh(x / cofactor)` with tuned (likely per-marker) cofactors.
+3. Embedding/clustering: per-marker z-score (`scale = T`) on a lineage panel → PCA → Harmony (`code`) → clustering/UMAP; cell types otherwise come from HaloAI classes.
+4. Spatial: neighborhoods via `imcRtools` with `img_id = "code"`.
+5. Group comparisons: never treat cells as replicates (Squair 2021; Zimmerman 2021). Either aggregate per section × cell type (mean asinh) and test with limma/lm (`~ group + sex + age`), or fit mixed models on cells with a donor random effect (`(1 | sample_id)`, plus `code` once both tissues are in). Same logic as diffcyt/CyTOF workflow (Nowicka 2017).
+
+### HALO intensity semantics (confirmed by user)
+- Area Quantification FL natively reports only `Average Positive Intensity` (mean over above-threshold pixels). The user sets **all positivity thresholds to 0**, so every pixel counts as positive and the value is the **mean over the whole object mask**. If a HALO analysis is ever rerun with nonzero thresholds, values change meaning. One of several HALO-module quirks being worked around.
+
+### References (verified on PubMed)
+- Bendall SC et al. 2011 Science. doi:10.1126/science.1198704
+- Nowicka M et al. 2017 F1000Research, CyTOF workflow. doi:10.12688/f1000research.11622.3
+- Windhager J et al. 2023 Nat Protoc, end-to-end multiplexed imaging workflow (imcRtools). doi:10.1038/s41596-023-00881-0
+- Hickey JW et al. 2021 Front Immunol, CODEX normalization vs cell-type accuracy. doi:10.3389/fimmu.2021.727626
+- Harris CR et al. 2022 Bioinformatics, slide-to-slide variation in MxIF. doi:10.1093/bioinformatics/btab877
+- Zhang Y et al. 2020 NAR Genom Bioinform, ComBat-seq. doi:10.1093/nargab/lqaa078
+- Nygaard V et al. 2016 Biostatistics, batch correction with unbalanced groups. doi:10.1093/biostatistics/kxv027
+- Squair JW et al. 2021 Nat Commun, pseudoreplication in single-cell DE. doi:10.1038/s41467-021-25960-2
+- Zimmerman KD et al. 2021 Nat Commun, mixed models for single-cell pseudoreplication. doi:10.1038/s41467-021-21038-1
+- Azad A et al. 2016 BMC Bioinformatics, flowVS per-channel asinh cofactor selection. doi:10.1186/s12859-016-1083-9
 
 ## Proposed toolchain (pending user agreement)
 
@@ -70,3 +109,9 @@ Phase 1 (current): import HALO object data, annotate objects with spatial contex
 ## Troubleshooting history
 
 - **PR 2 fallout (fread change, `myeloid_prelim.R`)**: the original code assigned `colnames(tab) <- c("object.id", "area", "x", "y", "code", feature_col_names)` **positionally**, assuming the old `[, c(other_cols, feature_cols)]` reordering. After switching to `fread(select = )` the extra `XMin/XMax/YMin/YMax` columns and file-order columns broke that mapping. User fixed in `0e0abc3`: dropped the reorder/positional rename, applied the marker-name cleanup to all colnames, and removed `XMin..YMax` after computing centroids. That fix left the ID column named `object_id` (from the in-loop `rename`) while the SCE block still referenced `object.id`; corrected in PR 3. Lesson → rule 8.
+- **`library(SpatialExperiment)` fails on the Quest analytic node** (PR 3 follow-up, user commit `e64d98e`). Chain of errors, all from `magick` (imported by SpatialExperiment): (1) `libMagick++-7.Q16HDRI.so.5` not found — `magick` was built against `ImageMagick/7.1.0-31`, a module that can't be loaded on the analytic node; (2) after an rpath rebuild, `libpng15.so.15` not found; (3) then `undefined symbol: xmlNanoHTTPMethod` in `libMagickCore`. Fixes:
+  - Rebuilt `magick` on a login node with the module loaded and `LDFLAGS += -Wl,--disable-new-dtags,-rpath,/software/ImageMagick/7.1.0-31/lib,-rpath,/hpc/software/spack_v20d1/spack/opt/spack/linux-rhel7-x86_64/gcc-4.8.5/libpng-1.5.30-txgtu3ltmhsnwbi6xrjmtybycdopf6vh/lib` in `~/.R/Makevars` (line removed afterwards). Diagnose with `ldd <pkg>/libs/<pkg>.so | grep "not found"` run **on the analytic node**.
+  - The libxml2 error can't be fixed by rpath: R on the analytic node already has `libxml2` 2.13.4 (2025 Spack stack, no nanohttp) in memory at startup (`grep libxml2 /proc/<pid>/maps`). Fix is the first line of the script: `dyn.load(".../libxml2-2.9.10-.../lib/libxml2.so.2", local = F)`, the in-session equivalent of the user's old `LD_PRELOAD`. Must run before any `library()` call in a fresh session; every entry point that loads SpatialExperiment/magick needs it.
+  - No ImageMagick on the 2025 stack was installed properly (only a build tree at `/gpfs/software/2025/ImageMagick/ImageMagick` and someone's conda env pass the `xmlNano` check). Permanent fix would be Quest installing ImageMagick on the 2025 stack; user chose to keep `dyn.load()`.
+  - `LD_PRELOAD`/`LD_LIBRARY_PATH` can't be set from inside R (`Sys.setenv`) — the loader reads them at process start.
+  - The user's Lmod cache is corrupt (`luac ... spiderT ... unexpected symbol`); `rm -rf ~/.cache/lmod` clears it.
