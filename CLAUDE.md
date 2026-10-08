@@ -84,6 +84,16 @@ Phase 1 (current): import HALO object data, annotate objects with spatial contex
   - User is adding non-myeloid cell types; final cofactors to be re-estimated on the combined object.
 - Data-driven alternative if this is unsatisfying: flowVS (Azad 2016) picks per-channel asinh cofactors by maximizing variance homogeneity across populations (Bartlett's test).
 
+### Slide/section-level intensity differences (discussed 2026-10-08, nothing implemented)
+- User reports one section in the myeloid prelim that doesn't integrate even after asinh + Harmony; suspects section quality / global staining, not disease.
+- Core constraint: one section = one donor = one group, so any per-section correction that aligns whole distributions (ComBat by `code`, slide-mean scaling, quantile normalization, mxnorm registration) also removes donor/disease signal. Only corrections anchored to something assumed biologically invariant are safe.
+- Diagnose first: (1) all channels shifted (exposure, fixation, PMI, tissue thickness) vs a subset; (2) PCF images markers in cycles, so if the affected channels share a cycle, that's a cycle failure; (3) background (negative-cell) level vs positive-population level vs both; (4) which group/run the section belongs to; (5) donor metadata (PMI ranges 3.5–58 h).
+- Options, roughly in order of preference:
+  1. Background-anchored normalization (RESTORE, Chang 2020): per section × marker, estimate the level in cells that should be negative (e.g. Iba1 in neurons/oligos) and divide/subtract by it. Assumes background isn't disease-related; caveat that lipofuscin/autofluorescence rises with age and neurodegeneration.
+  2. Shared reference tissue on every slide/run going forward (CytoNorm, Van Gassen 2020; FLINO, Graf 2022, which recommends ≥10 on-slide control objects). The only approach that cleanly separates technical from biological. Not possible retroactively.
+  3. Correct only for phenotyping: per-section scaling or stronger Harmony (`theta`) for clustering/cell-type calling, with group comparisons on uncorrected values with section/donor modeled. Cell-type proportions can still be biased if a section is globally off.
+  4. Pre-specified QC exclusion of the section (or of specific failed channels/cycles in that section) using objective, group-blind metrics, decided before looking at group results.
+
 ### Proposed full pipeline (not yet implemented; for discussion)
 1. QC: drop failed sections (`162-6`, `162-8`); area filter; DAPI-low / extreme-area objects (segmentation artifacts); optionally clip per-marker at the 99.9th percentile per section to tame hot pixels/debris.
 2. Transform: `asinh(x / cofactor)` with tuned (likely per-marker) cofactors.
@@ -105,6 +115,10 @@ Phase 1 (current): import HALO object data, annotate objects with spatial contex
 - Squair JW et al. 2021 Nat Commun, pseudoreplication in single-cell DE. doi:10.1038/s41467-021-25960-2
 - Zimmerman KD et al. 2021 Nat Commun, mixed models for single-cell pseudoreplication. doi:10.1038/s41467-021-21038-1
 - Azad A et al. 2016 BMC Bioinformatics, flowVS per-channel asinh cofactor selection. doi:10.1186/s12859-016-1083-9
+- Chang YH et al. 2020 Commun Biol, RESTORE (negative-cell background normalization). doi:10.1038/s42003-020-0828-1
+- Van Gassen S et al. 2020 Cytometry A, CytoNorm (shared-control normalization). doi:10.1002/cyto.a.23904
+- Graf J et al. 2022 Bioinformatics, FLINO (on-slide controls for MxIF normalization). doi:10.1093/bioinformatics/btab686
+- Korsunsky I et al. 2019 Nat Methods, Harmony. doi:10.1038/s41592-019-0619-0
 
 ## Proposed toolchain (pending user agreement)
 
