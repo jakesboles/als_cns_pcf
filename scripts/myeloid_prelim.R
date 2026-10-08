@@ -123,7 +123,35 @@ sce <- SpatialExperiment(assays = list(counts = counts),
 
 # Arcsinh transform -------------------------------------------------------
 
-cofactor <- 5
+set.seed(1)
+cof_sub <- assay(sce, "counts")[, sample(ncol(sce), min(ncol(sce), 5e4))]
+
+bg_peak <- function(v) {
+  d <- density(log(v[v > 0]), n = 512)
+  pk <- which(diff(sign(diff(d$y))) == -2) + 1
+  pk <- pk[d$y[pk] > 0.05 * max(d$y)]
+  if (!length(pk)) pk <- which.max(d$y)
+  exp(d$x[min(pk)])
+}
+
+cofactor <- apply(cof_sub, 1, bg_peak)
+
+# manual overrides, e.g. c(Iba1 = 120)
+cofactor_manual <- c()
+if (length(cofactor_manual)) cofactor[names(cofactor_manual)] <- cofactor_manual
+stopifnot(identical(names(cofactor), rownames(sce)))
+
+as.data.frame(t(cof_sub)) %>% 
+  pivot_longer(everything(), names_to = "marker") %>% 
+  filter(value > 0) %>% 
+  ggplot(aes(x = value)) + 
+  geom_density() + 
+  geom_vline(data = enframe(cofactor, name = "marker", value = "cofactor"),
+             aes(xintercept = cofactor),
+             color = "firebrick") + 
+  scale_x_log10() + 
+  facet_wrap(. ~ marker, scales = "free") + 
+  theme_linedraw(base_size = 8)
 
 assay(sce, "asinh") <- asinh(assay(sce, "counts") / cofactor)
 

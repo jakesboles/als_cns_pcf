@@ -57,7 +57,7 @@ Phase 1 (current): import HALO object data, annotate objects with spatial contex
 
 ### Current state (`myeloid_prelim.R`, PR 4)
 - Area filter: objects with area ≤ 65 µm² dropped.
-- `counts` assay = raw HALO mean intensities (the name is a SCE convention; these are not counts). `asinh` assay = `asinh(counts / cofactor)`, `cofactor <- 5` as a placeholder.
+- `counts` assay = raw HALO mean intensities (the name is a SCE convention; these are not counts). `asinh` assay = `asinh(counts / cofactor)` with a **per-marker** cofactor (see Cofactor selection).
 - ComBat-seq and `logNormCounts` removed (with `library(singleCellTK)`/`library(scuttle)`, whose only uses they were). All downstream `combat_*` references now point at `asinh`. `dittoDimPlot(sce, "CD163")` and the TMEM119 `dittoPlot` previously had no `assay =` and so plotted the dittoSeq default assay (likely raw `counts`, despite the "Normalized intensity" label); they now pass `assay = "asinh"` explicitly.
 - PCA on `asinh` with `scale = T` (per-marker z-scoring, cf. Hickey 2021), Harmony on `code` for the embedding only.
 - presto `logFC` on the `asinh` assay is a difference of mean asinh values (≈ log-ratio for values well above the cofactor).
@@ -69,6 +69,13 @@ Phase 1 (current): import HALO object data, annotate objects with spatial contex
 - **Why logNormCounts is inappropriate**: library-size factors assume each cell's total is technical (sequencing depth). Summed intensity across 70 unrelated antibodies isn't a depth proxy; dividing by it injects cell-type composition into every marker.
 - **Batch handling going forward**: correct only the embedding (Harmony on PCA, by `code` or staining run) for clustering/neighborhoods; keep expression values uncorrected for group comparisons and model batch/donor in the statistical test instead. Slide-mean scaling (Harris 2022, mxnorm) was best in their evaluation, but in this design one slide = one donor section, so it has the same confounding problem as ComBat-by-`code`.
 
+### Cofactor selection (`myeloid_prelim.R`, PR 4)
+- Per marker, cofactor = the **background (lowest) peak** of the raw intensity distribution: density of `log(intensity)` on a fixed random subsample of 50k cells (`set.seed(1)`, for speed), local maxima above 5% of the max density, take the lowest. asinh is ~linear below the cofactor and ~log above it, so this squashes background and log-scales true signal.
+- **One cofactor per marker across all sections** (not per section/run). A per-section cofactor would act as per-section normalization, which is confounded with donor/group (see ComBat rationale above).
+- `cofactor_manual` (named vector) overrides individual markers after visual review; `stopifnot()` guards order/names before the transform. The faceted density plot (log10 x-axis, red line = cofactor) is the review tool: the line should sit on the negative/background peak, left of any positive population.
+- **Main caveat**: the method needs a negative population in the data. The myeloid prelim export is (presumably) myeloid objects only, so ubiquitous myeloid markers (Iba1, CD68, ...) may have no negative peak and the estimate lands on the positive peak, over-compressing real variation. Fix by manual override, or by estimating cofactors once all cell types are loaded (the eventual whole-tissue object is the right place to set final cofactors).
+- Data-driven alternative if this is unsatisfying: flowVS (Azad 2016) picks per-channel asinh cofactors by maximizing variance homogeneity across populations (Bartlett's test).
+
 ### Proposed full pipeline (not yet implemented; for discussion)
 1. QC: drop failed sections (`162-6`, `162-8`); area filter; DAPI-low / extreme-area objects (segmentation artifacts); optionally clip per-marker at the 99.9th percentile per section to tame hot pixels/debris.
 2. Transform: `asinh(x / cofactor)` with tuned (likely per-marker) cofactors.
@@ -76,8 +83,8 @@ Phase 1 (current): import HALO object data, annotate objects with spatial contex
 4. Spatial: neighborhoods via `imcRtools` with `img_id = "code"`.
 5. Group comparisons: never treat cells as replicates (Squair 2021; Zimmerman 2021). Either aggregate per section × cell type (mean asinh) and test with limma/lm (`~ group + sex + age`), or fit mixed models on cells with a donor random effect (`(1 | sample_id)`, plus `code` once both tissues are in). Same logic as diffcyt/CyTOF workflow (Nowicka 2017).
 
-### Open question for user
-- HALO's `Average Positive Intensity` may be the mean over **positive (above-threshold) pixels** only, not the mean over the whole object mask. If so, values are conditional on positivity, cells with no positive pixels likely read 0, and thresholds set in HALO shape the data. Confirm which HALO output column is the whole-mask mean, if any.
+### HALO intensity semantics (confirmed by user)
+- Area Quantification FL natively reports only `Average Positive Intensity` (mean over above-threshold pixels). The user sets **all positivity thresholds to 0**, so every pixel counts as positive and the value is the **mean over the whole object mask**. If a HALO analysis is ever rerun with nonzero thresholds, values change meaning. One of several HALO-module quirks being worked around.
 
 ### References (verified on PubMed)
 - Bendall SC et al. 2011 Science. doi:10.1126/science.1198704
@@ -89,6 +96,7 @@ Phase 1 (current): import HALO object data, annotate objects with spatial contex
 - Nygaard V et al. 2016 Biostatistics, batch correction with unbalanced groups. doi:10.1093/biostatistics/kxv027
 - Squair JW et al. 2021 Nat Commun, pseudoreplication in single-cell DE. doi:10.1038/s41467-021-25960-2
 - Zimmerman KD et al. 2021 Nat Commun, mixed models for single-cell pseudoreplication. doi:10.1038/s41467-021-21038-1
+- Azad A et al. 2016 BMC Bioinformatics, flowVS per-channel asinh cofactor selection. doi:10.1186/s12859-016-1083-9
 
 ## Proposed toolchain (pending user agreement)
 
