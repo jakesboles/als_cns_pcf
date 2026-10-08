@@ -74,6 +74,14 @@ Phase 1 (current): import HALO object data, annotate objects with spatial contex
 - **One cofactor per marker across all sections** (not per section/run). A per-section cofactor would act as per-section normalization, which is confounded with donor/group (see ComBat rationale above).
 - `cofactor_manual` (named vector) overrides individual markers after visual review; `stopifnot()` guards order/names before the transform. The faceted density plot (log10 x-axis, red line = cofactor) is the review tool: the line should sit on the negative/background peak, left of any positive population.
 - **Main caveat**: the method needs a negative population in the data. The myeloid prelim export is (presumably) myeloid objects only, so ubiquitous myeloid markers (Iba1, CD68, ...) may have no negative peak and the estimate lands on the positive peak, over-compressing real variation. Fix by manual override, or by estimating cofactors once all cell types are loaded (the eventual whole-tissue object is the right place to set final cofactors).
+- **First look at the density plot (myeloid prelim, 2026-10-08)**:
+  - Markers span ~4 orders of magnitude in typical level (peaks from ~1 to ~5000), confirming a per-marker cofactor is needed; no single global value fits.
+  - Most markers are unimodal, so "lowest peak" = the only peak. That's background for markers myeloid cells shouldn't express (NeuN, GFAP, Olig2, CD3e/CD4/CD8, FOXP3...), as intended, but it's the **positive** population for pan-myeloid markers (Iba1, CD68, CD45, CD11c, CD14, TMEM119, CD44, HLADR, CD74), so those cofactors are too high until non-myeloid cells are added.
+  - Many markers have long left tails down to ~1e-2. Likely background-subtracted pixel values near 0 for negative cells; asinh handles these fine (linear region).
+  - Bimodal markers where the lowest-peak rule behaved as designed: ChAT, Ki67, pGR, pNRF2, PSAP, STING, NeuN, MBP, Synaptophysin. Where the line sits left of any visible mass (pTDP43, Mac2Galectin3, ASC), the detector picked a tiny bump that passed the 5% height cutoff; override or raise the cutoff.
+  - Suspicious bimodality to check by section/run before trusting: Ki67 (most myeloid cells in the high mode is biologically unlikely), pTDP43 (large high peak), MBP (most myeloid cells high, likely myelin signal bleeding into microglia masks in WM), ChAT. If a mode is driven by a few sections, it's a technical batch/staining effect, not a cell subset.
+  - DAPI is in the matrix; it's QC information, not a phenotype marker, and should be kept out of PCA/clustering/DE (it's already absent from the PCA `subset_row`).
+  - User is adding non-myeloid cell types; final cofactors to be re-estimated on the combined object.
 - Data-driven alternative if this is unsatisfying: flowVS (Azad 2016) picks per-channel asinh cofactors by maximizing variance homogeneity across populations (Bartlett's test).
 
 ### Proposed full pipeline (not yet implemented; for discussion)
