@@ -163,6 +163,8 @@ def main():
   args = p.parse_args()
 
   IMAGE_PATH = args.image
+  if not os.path.isfile(IMAGE_PATH):
+    sys.exit(f"Image not found: {IMAGE_PATH!r}")
   code = get_code(IMAGE_PATH)
   if code is None:
     sys.exit(f"Can't parse JSB<code>_ from {IMAGE_PATH}")
