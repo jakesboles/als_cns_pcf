@@ -1,0 +1,15 @@
+name: pcf_quant
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - numpy
+  - pandas
+  - geopandas>=1.0
+  - shapely>=2.0
+  - pyogrio
+  - rasterio
+  - tifffile
+  - imagecodecs
+  - pyarrow
+  - matplotlib

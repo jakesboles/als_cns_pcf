@@ -2,3 +2,7 @@ myeloid_quant/*
 pathology_quant/*
 pcf_images/*
 annotations/*
+data/*
+results/*
+logs/*
+__pycache__/

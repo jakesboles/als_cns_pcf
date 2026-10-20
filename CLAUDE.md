@@ -8,7 +8,7 @@ Working notes for Claude Code sessions on this repo: observations about the data
 2. **Never edit code directly.** Every change (this file included) goes through a PR on the session's designated feature branch for the user to accept or reject. No need to monitor PRs; the user reports their status (may change later if GitHub-based communication becomes easier).
 3. **Minimal code comments.** Short steering comments only. Explanations, rationale, and caveats go here, not in scripts. (Note: this is the opposite of the sister Visium repo's heavily-commented style; don't port its comment density.)
 4. **Optimize for speed** whenever possible without changing the result.
-5. If a PR's branch has already been merged, restart the branch from current `main` before adding new commits; never stack new work on merged history.
+5. If a PR's branch has already been merged, restart the branch from current `main` before adding new commits; never stack new work on merged history. **Verify the merge first** (`git branch -r --contains <last branch commit>` should list `origin/main`): restarting a branch whose PR is still open silently drops that PR's commits (happened once with PR 6; restored by cherry-pick).
 6. This session environment has **no cluster access, no real data, and no R install**. Anything written is reasoning-based, not executed. Always say so rather than implying something was tested.
 7. Ask on genuine judgment calls (methodology, ambiguous design, anything that changes semantics) instead of guessing. When flagging a bug, state confidence; apparent bugs have previously turned out to compensate for real upstream data quirks (see sister repo history).
 8. **Audit downstream effects of every change.** Before opening a PR, trace every object/column the change touches through the rest of the script (names, column order, classes, positional indexing) and fix knock-on breakage in the same PR. Added after PR 2, where the user had to clean up fallout by hand (see Troubleshooting history).
@@ -32,7 +32,24 @@ Phase 1 (current): import HALO object data, annotate objects with spatial contex
 - `antibody_targets`: one target per line, 70 lines, no header.
 - `scripts/myeloid_prelim.R`, `scripts/pathology_prelim.R`: prototype import → `SpatialExperiment` (myeloid) / `SingleCellExperiment` (pathology) → PCA/UMAP/Harmony → presto DE.
 - `scripts/pathology_summary.R`: % area of pTDP-43 / DPR from HALO summary exports, Wilcoxon by group.
-- Data dirs `myeloid_quant/`, `pathology_quant/` are gitignored; real data lives on Quest at `/projects/b1169/boles/als_cns_pcf`.
+- Data dirs `myeloid_quant/`, `pathology_quant/`, `pcf_images/`, `annotations/`, `data/`, `results/`, `logs/` are gitignored; real data lives on Quest at `/projects/b1169/boles/als_cns_pcf`.
+- `scripts/01_quantify_cells.py` + `jobs/01_quantify_cells.sh` + `envs/pcf_quant.yml`: per-cell quantification from qptiff + geoJSON (see below).
+
+## Cell quantification outside HALO (`scripts/01_quantify_cells.py`, PR 7)
+
+Decision (user, 2026-10-20): HALO is used **only for segmentation/classification**. Per-cell intensities are computed in Python on Quest from the raw PCF `.qptiff` + HALO cell-polygon geoJSONs, for speed (parallel on Quest), stable cell identifiers, and the ability to trace any cell back to the image. Supersedes the HALO Area Quantification FL exports for new work; `myeloid_prelim.R` not yet adapted (user: troubleshoot this first).
+
+- **Inputs** (relative to `/gpfs/projects/b1169/boles/als_cns_pcf`, both gitignored): `pcf_images/*.qptiff` (raw PCF output), `annotations/cells/<cell_type>/<file>.geojson` (one file per cell type per image; **cell type = subfolder name**, an assumption to confirm). Image ↔ geoJSON matching is by the `JSB<code>_` prefix (regex `JSB(\d+-\d+)_`), not the full filename.
+- **geoJSON format**: HALO exports closed **LineStrings** (not Polygons), integer coordinates in full-resolution pixels, y down, origin top-left; user confirmed positions match the image in QuPath, so an identity transform is used. LineStrings → Polygons; invalid → `make_valid`; degenerate (<3 unique points / zero area) dropped and logged. Same conversion logic as the Visium repo's `03b`.
+- **Method**: rasterize all cell polygons into one int32 label image at full resolution (`rasterio.features.rasterize`; a pixel belongs to a cell if its **center** is inside the polygon). Per channel, `np.bincount(labels, weights = pixels)` in 2048-row bands gives per-cell sums in one vectorized pass; / pixel count = mean. Bands keep the float64 temporaries small. Channels run in a `fork` multiprocessing pool so workers share the label image copy-on-write; each worker reads its own channel plane (`tifffile`, level 0 of series 0).
+- **Overlapping cells** (polygons sharing interior area, found with a shapely STRtree) are excluded from the label image and quantified exactly from their own bounding-box masks, so overlaps never steal pixels from each other. `overlap` column flags them.
+- **Cell IDs**: HALO's geoJSON carries no usable IDs, so `cell_id = <code>_<cell_type>_<feature_index>`, where `feature_index` is the 1-based position in that cell type's geoJSON. Stable as long as the geoJSON export isn't regenerated.
+- **Channel names** come from each qptiff page's XML `<Biomarker>` tag (fallback `<Name>`, then `ch<k>`); duplicates get `_2`, `_3`. Saved per image as `results/01_quantify_cells/<code>_channels.csv`. These are the raw PCF names, independent of HALO's column naming. Pixel size from TIFF `XResolution` (cm units) → `area_um2`.
+- **Outputs**: `data/01_quantify_cells/<code>.parquet` (one row per cell: `code, cell_id, cell_type, feature_index, x, y` (polygon centroid, px), `n_pixels, area_um2, overlap`, then one float32 mean-intensity column per channel); `results/01_quantify_cells/<code>_qc.csv` (per cell type: n cells, n overlapping, n zero-pixel, median area); `<code>_overlay.png` (2000×2000 px DAPI crop at the median cell position with polygon outlines: the alignment check).
+- **Testing**: verified on synthetic data in the Claude session (3000×2500 px, 4 channels, 402 LineString cells incl. 24 overlapping and 1 degenerate): every cell's mean and pixel count matched a brute-force pixel-center-in-polygon calculation exactly (float32 rounding only). **Not yet run on a real qptiff**: unconfirmed that tifffile exposes the qptiff as a single `(C, Y, X)` series (the script exits with a message if not) and that channel XML uses `<Biomarker>`.
+- **Validation to do on real data**: correlate per-cell means against HALO Area Quant (thresholds 0) for one image; expect r ≈ 1 per channel.
+- **Job**: `jobs/01_quantify_cells.sh`, one SLURM array task per image on **b1042/genomics** (many concurrent jobs, ~240 GB memory limit; b1169 allows only ~5–6 concurrent jobs). Submit from the project dir: `sbatch --array=1-$(ls pcf_images/*.qptiff | wc -l)%20 jobs/01_quantify_cells.sh`. 8 CPUs / 120 GB / 4 h are unmeasured starting points: check `seff` after the first run. Memory ≈ label image (4 bytes/px) + per worker one channel plane + band temporaries. `logs/` must exist before submitting (SLURM won't create it). Conda env from `envs/pcf_quant.yml` (`conda env create -f envs/pcf_quant.yml`).
+- Failed sections (`162-6`, `162-8`) are still quantified if their images are present; exclusion happens downstream.
 
 ## Cohort observations
 
@@ -84,6 +101,16 @@ Phase 1 (current): import HALO object data, annotate objects with spatial contex
   - User is adding non-myeloid cell types; final cofactors to be re-estimated on the combined object.
 - Data-driven alternative if this is unsatisfying: flowVS (Azad 2016) picks per-channel asinh cofactors by maximizing variance homogeneity across populations (Bartlett's test).
 
+### Slide/section-level intensity differences (discussed 2026-10-08, nothing implemented)
+- User reports one section in the myeloid prelim that doesn't integrate even after asinh + Harmony; suspects section quality / global staining, not disease.
+- Core constraint: one section = one donor = one group, so any per-section correction that aligns whole distributions (ComBat by `code`, slide-mean scaling, quantile normalization, mxnorm registration) also removes donor/disease signal. Only corrections anchored to something assumed biologically invariant are safe.
+- Diagnose first: (1) all channels shifted (exposure, fixation, PMI, tissue thickness) vs a subset; (2) PCF images markers in cycles, so if the affected channels share a cycle, that's a cycle failure; (3) background (negative-cell) level vs positive-population level vs both; (4) which group/run the section belongs to; (5) donor metadata (PMI ranges 3.5–58 h).
+- Options, roughly in order of preference:
+  1. Background-anchored normalization (RESTORE, Chang 2020): per section × marker, estimate the level in cells that should be negative (e.g. Iba1 in neurons/oligos) and divide/subtract by it. Assumes background isn't disease-related; caveat that lipofuscin/autofluorescence rises with age and neurodegeneration.
+  2. Shared reference tissue on every slide/run going forward (CytoNorm, Van Gassen 2020; FLINO, Graf 2022, which recommends ≥10 on-slide control objects). The only approach that cleanly separates technical from biological. Not possible retroactively.
+  3. Correct only for phenotyping: per-section scaling or stronger Harmony (`theta`) for clustering/cell-type calling, with group comparisons on uncorrected values with section/donor modeled. Cell-type proportions can still be biased if a section is globally off.
+  4. Pre-specified QC exclusion of the section (or of specific failed channels/cycles in that section) using objective, group-blind metrics, decided before looking at group results.
+
 ### Proposed full pipeline (not yet implemented; for discussion)
 1. QC: drop failed sections (`162-6`, `162-8`); area filter; DAPI-low / extreme-area objects (segmentation artifacts); optionally clip per-marker at the 99.9th percentile per section to tame hot pixels/debris.
 2. Transform: `asinh(x / cofactor)` with tuned (likely per-marker) cofactors.
@@ -105,6 +132,10 @@ Phase 1 (current): import HALO object data, annotate objects with spatial contex
 - Squair JW et al. 2021 Nat Commun, pseudoreplication in single-cell DE. doi:10.1038/s41467-021-25960-2
 - Zimmerman KD et al. 2021 Nat Commun, mixed models for single-cell pseudoreplication. doi:10.1038/s41467-021-21038-1
 - Azad A et al. 2016 BMC Bioinformatics, flowVS per-channel asinh cofactor selection. doi:10.1186/s12859-016-1083-9
+- Chang YH et al. 2020 Commun Biol, RESTORE (negative-cell background normalization). doi:10.1038/s42003-020-0828-1
+- Van Gassen S et al. 2020 Cytometry A, CytoNorm (shared-control normalization). doi:10.1002/cyto.a.23904
+- Graf J et al. 2022 Bioinformatics, FLINO (on-slide controls for MxIF normalization). doi:10.1093/bioinformatics/btab686
+- Korsunsky I et al. 2019 Nat Methods, Harmony. doi:10.1038/s41592-019-0619-0
 
 ## Proposed toolchain (pending user agreement)
 
