@@ -19,6 +19,7 @@ sys.stdout.reconfigure(line_buffering=True)
 
 PLOT_MAX_CELLS = 200000
 COLORS = {"unassigned": "lightgray", "multiple": "red"}
+NESTED = {"sc": ["gm", "wm"]}
 
 
 def find_region_files(region_dir):
@@ -45,10 +46,25 @@ def load_region(paths):
   return (shapely.union_all(geoms) if geoms else None), len(geoms), n_drop
 
 
-def annotate(code, in_dir, data_dir, results_dir, region_files):
+def assign_region(out, labels, tissue):
+  hits = {l: out[f"in_{l}"].fillna(False).to_numpy(bool) for l in labels}
+  region = np.full(len(out), "unassigned", dtype=object)
+  if tissue in NESTED:
+    order = NESTED[tissue] + [l for l in labels if l not in NESTED[tissue]]
+    for l in reversed([l for l in order if l in hits]):
+      region[hits[l]] = l.upper()
+    return region
+  n_hits = np.sum(list(hits.values()), axis=0)
+  for l in labels:
+    region[hits[l] & (n_hits == 1)] = l.upper()
+  region[n_hits > 1] = "multiple"
+  return region
+
+
+def annotate(code, tissue, in_dir, data_dir, results_dir, region_files):
   cells = pd.read_parquet(os.path.join(in_dir, f"{code}.parquet"), columns=["cell_id", "cell_type", "x", "y"])
   x, y = cells["x"].to_numpy(), cells["y"].to_numpy()
-  out = pd.DataFrame({"code": code, "cell_id": cells["cell_id"]})
+  out = pd.DataFrame({"code": code, "cell_id": cells["cell_id"], "tissue": tissue})
   regions = {}
 
   for label in sorted(region_files):
@@ -69,11 +85,7 @@ def annotate(code, in_dir, data_dir, results_dir, region_files):
     out[col] = pd.array(shapely.contains_xy(geom, x, y), dtype="boolean")
     regions[label] = geom
 
-  labels = sorted(region_files)
-  hits = np.column_stack([out[f"in_{l}"].fillna(False).to_numpy(bool) for l in labels])
-  n_hits = hits.sum(axis=1)
-  first = np.array([l.upper() for l in labels])[hits.argmax(axis=1)]
-  out["region"] = np.where(n_hits == 1, first, np.where(n_hits > 1, "multiple", "unassigned"))
+  out["region"] = assign_region(out, sorted(region_files), tissue)
 
   out.to_parquet(os.path.join(data_dir, f"{code}.parquet"), index=False)
   pd.crosstab(cells["cell_type"], out["region"], margins=True).to_csv(
@@ -89,7 +101,7 @@ def plot_regions(code, regions, x, y, region, out_png):
   cmap = plt.get_cmap("tab10")
   colors = {lab.upper(): cmap(k) for k, lab in enumerate(sorted(regions))} | COLORS
   fig, ax = plt.subplots(figsize=(10, 10))
-  for label, geom in regions.items():
+  for label, geom in sorted(regions.items(), key=lambda kv: -kv[1].area):
     gpd.GeoSeries([geom]).plot(ax=ax, color=colors[label.upper()], alpha=0.15, edgecolor="black", linewidth=0.3)
   for r in sorted(set(region)):
     sel = idx[region[idx] == r]
@@ -109,6 +121,7 @@ def main():
   p.add_argument("--codes", nargs="*")
   p.add_argument("--in_dir", default="data/01_quantify_cells/")
   p.add_argument("--region_dir", default="annotations/region")
+  p.add_argument("--sample_key", default="sample_key.csv")
   p.add_argument("--data_dir", default="data/02_annotate_regions/")
   p.add_argument("--results_dir", default="results/02_annotate_regions/")
   p.add_argument("--workers", type=int, default=int(os.environ.get("SLURM_CPUS_PER_TASK", 1)))
@@ -126,7 +139,13 @@ def main():
     sys.exit(f"No region geoJSONs under {args.region_dir}/<region>_annotations/")
   log(f"{len(codes)} images; regions: {', '.join(sorted(region_files))}")
 
-  jobs = [(c, args.in_dir, args.data_dir, args.results_dir, region_files) for c in codes]
+  key = pd.read_csv(args.sample_key, encoding="utf-8-sig", dtype=str)
+  tissue = dict(zip(key["code"].str.strip(), key["tissue"].str.strip()))
+  missing = [c for c in codes if c not in tissue]
+  if missing:
+    sys.exit(f"Codes not in {args.sample_key}: {', '.join(missing)}")
+
+  jobs = [(c, tissue[c], args.in_dir, args.data_dir, args.results_dir, region_files) for c in codes]
   with mp.get_context("fork").Pool(min(args.workers, len(codes))) as pool:
     for code, counts in pool.starmap(annotate, jobs):
       log(f"{code}: {counts}")
