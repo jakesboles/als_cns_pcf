@@ -228,7 +228,7 @@ def main():
   cells["area_um2"] = cells["n_pixels"] * px_um ** 2
   n_zero = int((cells["n_pixels"] == 0).sum())
   if n_zero:
-    log(f"{n_zero} cells cover no pixel centers; intensities will be NaN")
+    log(f"{n_zero} cells cover no pixel centers; dropped from the parquet, listed in {code}_dropped_cells.csv")
 
   log(f"Quantifying {len(channels)} channels with {args.workers} workers")
   means = np.full((N_CELLS, len(channels)), np.nan, dtype=np.float32)
@@ -254,7 +254,6 @@ def main():
     "overlap": cells["overlap"].values,
   })
   out = pd.concat([out, pd.DataFrame(means, columns=channels)], axis=1)
-  out.to_parquet(os.path.join(args.data_dir, f"{code}.parquet"), index=False)
   pd.DataFrame({"index": range(len(channels)), "channel": channels}).to_csv(
     os.path.join(args.results_dir, f"{code}_channels.csv"), index=False)
   out.groupby("cell_type").agg(
@@ -263,6 +262,14 @@ def main():
     n_zero_px=("n_pixels", lambda s: int((s == 0).sum())),
     median_area_um2=("area_um2", "median"),
   ).to_csv(os.path.join(args.results_dir, f"{code}_qc.csv"))
+
+  zero = out["n_pixels"].values == 0
+  bx0, by0, bx1, by1 = shapely.bounds(geoms).T
+  out.loc[zero, ["cell_id", "cell_type", "feature_index", "x", "y"]].assign(
+    poly_area_px=shapely.area(geoms[zero]),
+    inside_image=(bx0[zero] >= 0) & (by0[zero] >= 0) & (bx1[zero] <= shape[1]) & (by1[zero] <= shape[0]),
+  ).to_csv(os.path.join(args.results_dir, f"{code}_dropped_cells.csv"), index=False)
+  out[~zero].to_parquet(os.path.join(args.data_dir, f"{code}.parquet"), index=False)
 
   dapi = [k for k, nm in enumerate(channels) if "DAPI" in nm.upper()]
   qc_overlay(IMAGE_PATH, dapi[0] if dapi else 0, cells, shape,
