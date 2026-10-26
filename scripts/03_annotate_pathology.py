@@ -15,7 +15,7 @@ from pcf_utils import log, get_code, to_polygon
 
 sys.stdout.reconfigure(line_buffering=True)
 
-QC_COLORS = {"pos": [220, 30, 30], "neg": [120, 120, 120], "feature": [255, 200, 0]}
+QC_COLORS = {"pos": [220, 30, 30], "touch": [30, 120, 220], "neg": [120, 120, 120], "feature": [255, 200, 0]}
 
 
 def find_files(root):
@@ -52,13 +52,14 @@ def feature(geom, props):
   return {"type": "Feature", "geometry": json.loads(shapely.to_geojson(geom)), "properties": props}
 
 
-def write_qc_geojson(path, label, cell_ids, cell_geoms, pos, context, feats):
+def write_qc_geojson(path, label, min_frac, cell_ids, cell_geoms, pos, touch, context, feats):
   out = []
-  for k in np.flatnonzero(pos | context):
-    cls = f"{label}+" if pos[k] else f"{label}-"
+  for k in np.flatnonzero(pos | touch | context):
+    kind = "pos" if pos[k] else "touch" if touch[k] else "neg"
+    cls = {"pos": f"{label}+", "touch": f"{label} touch <{min_frac:g}", "neg": f"{label}-"}[kind]
     out.append(feature(cell_geoms[k], {
       "objectType": "detection", "name": cell_ids[k],
-      "classification": {"name": cls, "color": QC_COLORS["pos" if pos[k] else "neg"]}}))
+      "classification": {"name": cls, "color": QC_COLORS[kind]}}))
   for g in feats:
     out.append(feature(g, {
       "objectType": "annotation", "isLocked": True,
@@ -95,15 +96,18 @@ def annotate(code, args, cell_files, path_files):
     ov_area = np.zeros(len(out))
     max_frac = np.zeros(len(out))
     context = np.zeros(len(out), dtype=bool)
+    touch = np.zeros(len(out), dtype=bool)
     if len(feats):
       tree = shapely.STRtree(feats)
       idx = np.flatnonzero(has_geom)
       ci, fi = tree.query(geoms[idx], predicate="intersects")
       ci = idx[ci]
       inter = shapely.area(shapely.intersection(geoms[ci], feats[fi]))
-      np.add.at(n_hit, ci, 1)
+      frac = inter / shapely.area(feats[fi])
+      np.add.at(n_hit, ci, frac >= args.min_frac)
       np.add.at(ov_area, ci, inter)
-      np.maximum.at(max_frac, ci, inter / shapely.area(feats[fi]))
+      np.maximum.at(max_frac, ci, frac)
+      touch[ci] = True
       cj, _ = tree.query(geoms[idx], predicate="dwithin", distance=args.context_px)
       context[idx[cj]] = True
 
@@ -119,7 +123,8 @@ def annotate(code, args, cell_files, path_files):
       os.path.join(args.results_dir, f"{code}_{label}_counts.csv"))
     if not args.no_qc_geojson:
       write_qc_geojson(os.path.join(args.results_dir, f"{code}_{label}_qc.geojson"), label,
-                       cells["cell_id"].to_numpy(), geoms, pos & has_geom, context & has_geom, feats)
+                       args.min_frac, cells["cell_id"].to_numpy(), geoms, pos & has_geom,
+                       touch & ~pos & has_geom, context & has_geom, feats)
 
   out.to_parquet(os.path.join(args.data_dir, f"{code}.parquet"), index=False)
   return code, summary
@@ -133,6 +138,7 @@ def main():
   p.add_argument("--pathology_dir", default="annotations/pathology")
   p.add_argument("--data_dir", default="data/03_annotate_pathology/")
   p.add_argument("--results_dir", default="results/03_annotate_pathology/")
+  p.add_argument("--min_frac", type=float, default=0.05)
   p.add_argument("--context_px", type=float, default=50)
   p.add_argument("--no_qc_geojson", action="store_true")
   p.add_argument("--workers", type=int, default=int(os.environ.get("SLURM_CPUS_PER_TASK", 1)))
@@ -153,7 +159,7 @@ def main():
   for cell_type, by_code in by_type.items():
     for code, paths in by_code.items():
       cell_files[code][cell_type] = paths
-  log(f"{len(codes)} images; pathology: {', '.join(sorted(path_files))}")
+  log(f"{len(codes)} images; pathology: {', '.join(sorted(path_files))}; min_frac {args.min_frac}")
 
   jobs = [(c, args, dict(cell_files), path_files) for c in codes]
   with mp.get_context("fork").Pool(min(args.workers, len(codes))) as pool:
