@@ -26,6 +26,19 @@ pq <- full_join(pq1, pq2,
 
 # Add in pathology and vasculature relationship data here -----------------
 
+pq3 <- arrow::read_parquet("data/03_annotate_pathology/160-1.parquet")
+
+pq3 <- pq3 %>% 
+  dplyr::select(c(cell_id, has_dpr, has_ptdp))
+
+pq4 <- arrow::read_parquet("data/04_feature_distances/160-1.parquet")
+
+pq <- pq %>% 
+  left_join(pq3, 
+            by = "cell_id") %>% 
+  left_join(pq4,
+            by = c("code", "cell_id"))
+
 # Add in demographic data -------------------------------------------------
 
 # Make sure Galectin-3 is named the same every time -----------------------
@@ -169,6 +182,21 @@ dittoDimPlot(sce,
              "NeuN",
              assay = "asinh",
              reduction.use = "UMAP")
+
+dittoDimPlot(sce,
+             "dist_vessel_um",
+             reduction.use = "UMAP")
+
+dittoDimPlot(sce,
+             "has_dpr",
+             reduction.use = "UMAP")
+
+sce$touching_vessel <- if_else(sce$dist_vessel_um == 0, "Y", "N")
+
+dittoDimPlot(sce,
+             "touching_vessel",
+             reduction.use = "UMAP")
+
 # 
 # scater::plotUMAP(sce,
 #          colour_by = "batch")
