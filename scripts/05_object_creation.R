@@ -12,17 +12,16 @@ dir.create(results_dir, showWarnings = F, recursive = T)
 # Settings ----------------------------------------------------------------
 
 tissues_use <- "mcx"
-failed_sections <- c("162-6", "162-8")
 
 channel_rename <- c("Mac2/Galectin-3" = "Galectin-3")
 
 canonical_markers <- list(
   astrocytes = c("Vimentin", "GFAP"),
   cd4_tcell = c("CD4", "CD3e"),
-  cd8_tcell = c("CD8a", "CD3e"),
+  cd8_tcell = c("CD8", "CD3e"),
   cortical_neurons = c("NeuN"),
   myeloid = c("Iba-1"),
-  oligodendrocyte = c("Olig2")
+  oligodendrocyte = c("Olig-2")
 )
 
 size_limits <- tribble(
@@ -209,9 +208,7 @@ for (ct in names(canonical_markers)) {
 }
 spe$flag_lineage <- flag_lineage
 
-spe$flag_section <- spe$code %in% failed_sections
-
-flag_cols <- c("flag_size", "flag_region", "flag_lineage", "flag_section")
+flag_cols <- c("flag_size", "flag_region", "flag_lineage")
 flags <- as.matrix(as.data.frame(colData(spe)[, flag_cols]))
 spe$keep <- rowSums(flags) == 0
 reason <- rep("", ncol(spe))
