@@ -15,6 +15,9 @@ tissues_use <- "mcx"
 
 channel_rename <- c("Mac2/Galectin-3" = "Galectin-3")
 
+# channels to leave out of the object, by name after renaming, e.g. c("Ki67", "H2A.X")
+channels_drop <- character()
+
 canonical_markers <- list(
   astrocytes = c("Vimentin", "GFAP"),
   cd4_tcell = c("CD4", "CD3e"),
@@ -88,6 +91,11 @@ if (length(mismatch)) {
   stop("Channel names differ between sections; extend channel_rename")
 }
 
+unknown_drop <- setdiff(channels_drop, features)
+if (length(unknown_drop)) stop("channels_drop not found in channels: ", paste(unknown_drop, collapse = ", "))
+features <- setdiff(features, channels_drop)
+message(length(features), " channels kept, ", length(channels_drop), " dropped")
+
 missing_markers <- setdiff(unlist(canonical_markers), features)
 if (length(missing_markers)) stop("Canonical markers not in channels: ", paste(missing_markers, collapse = ", "))
 
@@ -103,6 +111,7 @@ pq <- map(codes, function(cd) {
   message("Loading ", cd)
   d1 <- read_step("01_quantify_cells", cd)
   names(d1) <- rename_channels(names(d1))
+  d1 <- d1 %>% dplyr::select(-any_of(channels_drop))
   d2 <- read_step("02_annotate_regions", cd) %>% dplyr::select(cell_id, in_gm, in_wm, region)
   d3 <- read_step("03_annotate_pathology", cd) %>% dplyr::select(cell_id, any_of(c("has_dpr", "has_ptdp")))
   d4 <- read_step("04_feature_distances", cd) %>% dplyr::select(-code)
