@@ -16,7 +16,8 @@ tissues_use <- "mcx"
 channel_rename <- c("Mac2/Galectin-3" = "Galectin-3")
 
 # channels to leave out of the object, by name after renaming, e.g. c("Ki67", "H2A.X")
-channels_drop <- character()
+channels_drop <- c("DAPI", "Tau (phospho T181)", "Tau (phospho S396)",
+                           "EPR2488", "Tau (phospho T205)", "A-beta")
 
 canonical_markers <- list(
   astrocytes = c("Vimentin", "GFAP"),
