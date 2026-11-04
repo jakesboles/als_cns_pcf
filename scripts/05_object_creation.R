@@ -39,7 +39,11 @@ size_limits <- tribble(
 )
 
 cells_per_section <- 5000
-cutoff_k <- 3
+cutoff_k <- 2
+
+# extra cell types expected to express a canonical marker, left out of its background reference,
+# e.g. list(CD4 = "myeloid", Vimentin = "myeloid")
+marker_extra_positive <- list()
 
 # manual overrides, e.g. c(`Iba-1` = 120)
 cofactor_manual <- c()
@@ -157,6 +161,17 @@ cof_idx <- split(seq_len(ncol(spe)), spe$code) %>%
   map(~ if (length(.x) > cells_per_section) sample(.x, cells_per_section) else .x) %>%
   unlist(use.names = F)
 cof_sub <- assay(spe, "counts")[, cof_idx]
+cof_types <- spe$cell_type[cof_idx]
+
+canon <- unique(unlist(canonical_markers))
+bad_extra <- setdiff(names(marker_extra_positive), canon)
+if (length(bad_extra)) stop("marker_extra_positive names aren't canonical markers: ", paste(bad_extra, collapse = ", "))
+bad_types <- setdiff(unlist(marker_extra_positive), names(canonical_markers))
+if (length(bad_types)) stop("marker_extra_positive cell types unknown: ", paste(bad_types, collapse = ", "))
+
+pos_types <- map(set_names(canon), ~ c(names(purrr::keep(canonical_markers, function(m) .x %in% m)),
+                                        marker_extra_positive[[.x]]))
+ref_cells <- map(pos_types, ~ !(cof_types %in% .x))
 
 bg_peak <- function(v) {
   d <- density(log(v[!is.na(v) & v > 0]), n = 512)
@@ -167,6 +182,7 @@ bg_peak <- function(v) {
 }
 
 cofactor <- apply(cof_sub, 1, bg_peak)
+for (mk in canon) cofactor[mk] <- bg_peak(cof_sub[mk, ref_cells[[mk]]])
 if (length(cofactor_manual)) cofactor[names(cofactor_manual)] <- cofactor_manual
 stopifnot(identical(names(cofactor), rownames(spe)))
 
@@ -176,15 +192,19 @@ assay(spe, "asinh") <- asinh(assay(spe, "counts") / cofactor)
 
 a0 <- asinh(1)
 asinh_sub <- asinh(cof_sub / cofactor)
-bg_sd <- apply(asinh_sub, 1, function(a) {
+left_sd <- function(a) {
   a <- a[!is.na(a) & a < a0]
   if (length(a)) sqrt(mean((a - a0)^2)) else 0
-})
+}
+bg_sd <- apply(asinh_sub, 1, left_sd)
+for (mk in canon) bg_sd[mk] <- left_sd(asinh_sub[mk, ref_cells[[mk]]])
 cutoff <- a0 + cutoff_k * bg_sd
 if (length(cutoff_manual)) cutoff[names(cutoff_manual)] <- cutoff_manual
 
 marker_table <- tibble(marker = names(cofactor), cofactor = cofactor, bg_sd = bg_sd,
-                       cutoff_asinh = cutoff, cutoff_raw = cofactor * sinh(cutoff))
+                       cutoff_asinh = cutoff, cutoff_raw = cofactor * sinh(cutoff),
+                       background_from = if_else(names(cofactor) %in% canon,
+                                                 "other cell types", "all cells"))
 write.csv(marker_table, paste0(results_dir, "marker_cofactors_cutoffs.csv"), row.names = F)
 
 p <- as_tibble(t(cof_sub)) %>%
@@ -255,25 +275,28 @@ plot_idx <- split(seq_len(ncol(spe)), spe$cell_type) %>%
   map(~ if (length(.x) > 2e4) sample(.x, 2e4) else .x) %>%
   unlist(use.names = F)
 
-lineage_long <- map(unique(unlist(canonical_markers)), function(mk) {
-  own_types <- names(purrr::keep(canonical_markers, ~ mk %in% .x))
+lineage_long <- map(canon, function(mk) {
   tibble(marker = mk,
-         value = assay(spe, "asinh")[mk, plot_idx],
-         own = spe$cell_type[plot_idx] %in% own_types)
+         value = assay(spe, "counts")[mk, plot_idx],
+         cell_type = spe$cell_type[plot_idx],
+         expected = spe$cell_type[plot_idx] %in% pos_types[[mk]])
 }) %>%
-  list_rbind()
+  list_rbind() %>%
+  filter(value > 0)
 
 p <- lineage_long %>%
-  ggplot(aes(x = value, color = own)) +
-  geom_density() +
-  geom_vline(data = filter(marker_table, marker %in% unlist(canonical_markers)),
-             aes(xintercept = cutoff_asinh), linetype = 2) +
-  facet_wrap(. ~ marker, scales = "free") +
-  scale_color_manual(values = c(`TRUE` = "firebrick", `FALSE` = "gray50"),
-                     labels = c(`TRUE` = "own cell type", `FALSE` = "other cell types")) +
-  labs(x = "asinh intensity", color = NULL) +
-  theme_linedraw(base_size = 9)
-ggsave(paste0(results_dir, "canonical_marker_cutoffs.png"), p, width = 10, height = 6, dpi = 200)
+  ggplot(aes(x = value, fill = expected)) +
+  geom_density(alpha = 0.6) +
+  geom_vline(data = filter(marker_table, marker %in% canon), aes(xintercept = cofactor), color = "firebrick") +
+  geom_vline(data = filter(marker_table, marker %in% canon), aes(xintercept = cutoff_raw),
+             color = "dodgerblue", linetype = 2) +
+  scale_x_log10() +
+  scale_fill_manual(values = c(`TRUE` = "firebrick", `FALSE` = "gray70"),
+                    labels = c(`TRUE` = "expected positive", `FALSE` = "background reference")) +
+  facet_grid(cell_type ~ marker, scales = "free") +
+  labs(x = "raw intensity", fill = NULL) +
+  theme_linedraw(base_size = 8)
+ggsave(paste0(results_dir, "canonical_marker_by_cell_type.png"), p, width = 16, height = 10, dpi = 200)
 
 table(spe$cell_type, spe$flag_reason)
 
