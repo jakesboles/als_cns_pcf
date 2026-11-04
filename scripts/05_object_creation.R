@@ -1,114 +1,156 @@
 dyn.load("/hpc/software/spack/opt/spack/linux-rhel7-x86_64/gcc-4.8.5/libxml2-2.9.10-sbmpowvpmrw3sytyglnc3y6stcfbkg4o/lib/libxml2.so.2", local = F)
 library(tidyverse)
-library(ggplot2)
-library(janitor)
-library(ggbeeswarm)
-library(ggpubr)
 library(SpatialExperiment)
-library(scater)
-library(presto)
-library(dittoSeq)
-library(harmony)
-library(pheatmap)
 
 setwd("/projects/b1169/boles/als_cns_pcf")
 
-features <- read.csv("results/01_quantify_cells/160-1_channels.csv")
+data_dir <- "data/05_object_creation/"
+results_dir <- "results/05_object_creation/"
+dir.create(data_dir, showWarnings = F, recursive = T)
+dir.create(results_dir, showWarnings = F, recursive = T)
 
-features <- features %>% 
-  pull(channel)
+# Settings ----------------------------------------------------------------
 
-pq1 <- arrow::read_parquet("data/01_quantify_cells/160-1.parquet")
-pq2 <- arrow::read_parquet("data/02_annotate_regions/160-1.parquet")
+tissues_use <- "mcx"
+failed_sections <- c("162-6", "162-8")
 
-pq <- full_join(pq1, pq2,
-                by = c("code", "cell_id"))
+channel_rename <- c("Mac2/Galectin-3" = "Galectin-3")
 
-# Add in pathology and vasculature relationship data here -----------------
-
-pq3 <- arrow::read_parquet("data/03_annotate_pathology/160-1.parquet")
-
-pq3 <- pq3 %>% 
-  dplyr::select(c(cell_id, has_dpr, has_ptdp))
-
-pq4 <- arrow::read_parquet("data/04_feature_distances/160-1.parquet")
-
-pq <- pq %>% 
-  left_join(pq3, 
-            by = "cell_id") %>% 
-  left_join(pq4,
-            by = c("code", "cell_id"))
-
-# Add in demographic data -------------------------------------------------
-
-# Make sure Galectin-3 is named the same every time -----------------------
-
-# galectin3_idx <- colnames(pq) %in% "DAPI"
-
-# colnames(pq)[galectin3_idx] <- "Galectin-3"
-
-# table(pq$region)
-# 
-# pq %>% 
-#   filter(region %in% c("GM", "WM")) %>%
-#   ggplot(aes(x = x,
-#              y = y)) + 
-#   geom_point(aes(color = cell_type),
-#              size = 0.1) + 
-#   facet_wrap(. ~ region,
-#              nrow = 1) +
-#   theme_void()
-
-# Filter on size ----------------------------------------------------------
-
-pq %>% 
-  ggplot(aes(x = area_um2)) + 
-  geom_histogram() + 
-  facet_wrap(. ~ cell_type,
-             ncol = 1,
-             scales = "free_y") +
-  scale_x_log10()
-
-pq <- pq %>% 
-  filter(area_um2 > 40 & 
-           area_um2 < 1500)
-
-# Prep SPE object ---------------------------------------------------------
-cell_id <- pq$cell_id
-
-meta <- pq %>% 
-  dplyr::select(-features) %>%
-  mutate(batch = str_split_i(code, "-", i = 1))
-
-counts <- pq %>%
-  dplyr::select(features) %>% 
-  t()
-
-rownames(meta) <- cell_id -> colnames(counts)
-
-sce <- SpatialExperiment(assays = list(counts = counts),
-                         colData = meta,
-                         spatialCoordsNames = c("x", "y"))
-
-# dittoHeatmap(sce,
-#              genes = features,
-#              annot.by = "code",
-#              assay = "counts")
-
-# Arcsinh transform -------------------------------------------------------
-
-set.seed(1)
-cof_sub <- assay(sce, "counts")[, sample(ncol(sce), min(ncol(sce), 5e4))]
-
-idx <- which(is.na(cof_sub), arr.ind = TRUE)
-
-cbind(
-  row_name = rownames(cof_sub)[idx[, 1]],
-  col_name = colnames(cof_sub)[idx[, 2]]
+canonical_markers <- list(
+  astrocytes = c("Vimentin", "GFAP"),
+  cd4_tcell = c("CD4", "CD3e"),
+  cd8_tcell = c("CD8a", "CD3e"),
+  cortical_neurons = c("NeuN"),
+  myeloid = c("Iba-1"),
+  oligodendrocyte = c("Olig2")
 )
 
+size_limits <- tribble(
+  ~cell_type,         ~min_area, ~max_area,
+  "astrocytes",       40,        250,
+  "cd4_tcell",        10,        Inf,
+  "cd8_tcell",        10,        Inf,
+  "cortical_neurons", 40,        400,
+  "myeloid",          40,        400,
+  "oligodendrocyte",  10,        60
+)
+
+cells_per_section <- 5000
+cutoff_k <- 3
+
+# manual overrides, e.g. c(`Iba-1` = 120)
+cofactor_manual <- c()
+cutoff_manual <- c()
+
+# Sample key and demographics ---------------------------------------------
+
+key <- read.csv("sample_key.csv", fileEncoding = "UTF-8-BOM") %>%
+  dplyr::select(code, sample_id, tissue) %>%
+  mutate(across(everything(), str_trim))
+
+demographics <- read.csv("target_als_demographics_compiled.csv") %>%
+  dplyr::select(Case.Number, Sex, Age.at.Death, Clinical.Diagnosis, C9orf72.mutation) %>%
+  mutate(group = case_when(C9orf72.mutation == "Y" ~ "C9orf72-ALS",
+                           Clinical.Diagnosis == "Control" ~ "Control",
+                           .default = "sALS"),
+         Case.Number = str_remove_all(Case.Number, "-")) %>%
+  dplyr::rename(sample_id = Case.Number, sex = Sex, age = Age.at.Death,
+                clinical_diagnosis = Clinical.Diagnosis, c9orf72_mutation = C9orf72.mutation)
+
+key <- key %>%
+  left_join(demographics, by = "sample_id") %>%
+  mutate(batch = str_split_i(code, "-", i = 1),
+         group = factor(group, levels = c("Control", "sALS", "C9orf72-ALS")))
+
+codes <- list.files("data/01_quantify_cells", pattern = "\\.parquet$") %>%
+  str_remove("\\.parquet$")
+codes <- intersect(codes, key$code[key$tissue %in% tissues_use])
+message(length(codes), " sections: ", paste(codes, collapse = ", "))
+
+# Channel names -----------------------------------------------------------
+
+rename_channels <- function(x) {
+  i <- x %in% names(channel_rename)
+  x[i] <- channel_rename[x[i]]
+  unname(x)
+}
+
+channels <- map(set_names(codes), function(cd) {
+  rename_channels(read.csv(paste0("results/01_quantify_cells/", cd, "_channels.csv"))$channel)
+})
+
+features <- channels[[1]]
+mismatch <- purrr::keep(channels, ~ !setequal(.x, features))
+if (length(mismatch)) {
+  walk(names(mismatch), function(cd) {
+    message(cd, ": missing ", paste(setdiff(features, mismatch[[cd]]), collapse = ", "),
+            " | extra ", paste(setdiff(mismatch[[cd]], features), collapse = ", "))
+  })
+  stop("Channel names differ between sections; extend channel_rename")
+}
+
+missing_markers <- setdiff(unlist(canonical_markers), features)
+if (length(missing_markers)) stop("Canonical markers not in channels: ", paste(missing_markers, collapse = ", "))
+
+# Load 01-04 --------------------------------------------------------------
+
+read_step <- function(step, cd) {
+  f <- paste0("data/", step, "/", cd, ".parquet")
+  if (!file.exists(f)) stop("Missing ", f, "; run ", step, " for ", cd)
+  arrow::read_parquet(f)
+}
+
+pq <- map(codes, function(cd) {
+  message("Loading ", cd)
+  d1 <- read_step("01_quantify_cells", cd)
+  names(d1) <- rename_channels(names(d1))
+  d2 <- read_step("02_annotate_regions", cd) %>% dplyr::select(cell_id, in_gm, in_wm, region)
+  d3 <- read_step("03_annotate_pathology", cd) %>% dplyr::select(cell_id, any_of(c("has_dpr", "has_ptdp")))
+  d4 <- read_step("04_feature_distances", cd) %>% dplyr::select(-code)
+  out <- d1 %>%
+    left_join(d2, by = "cell_id") %>%
+    left_join(d3, by = "cell_id") %>%
+    left_join(d4, by = "cell_id")
+  stopifnot(nrow(out) == nrow(d1))
+  out
+}) %>%
+  list_rbind()
+
+pq <- pq %>%
+  left_join(key, by = "code")
+
+unknown_types <- setdiff(unique(pq$cell_type), size_limits$cell_type)
+if (length(unknown_types)) stop("No size limits / markers for cell types: ", paste(unknown_types, collapse = ", "))
+
+# Build SPE ---------------------------------------------------------------
+
+meta <- pq %>%
+  dplyr::select(-all_of(features)) %>%
+  as.data.frame()
+rownames(meta) <- meta$cell_id
+
+counts <- t(as.matrix(pq[, features]))
+colnames(counts) <- meta$cell_id
+
+rm(pq)
+gc()
+
+spe <- SpatialExperiment(assays = list(counts = counts),
+                         colData = meta,
+                         spatialCoordsNames = c("x", "y"))
+rm(counts, meta)
+gc()
+
+# Cofactors (background peak) ---------------------------------------------
+
+set.seed(1)
+cof_idx <- split(seq_len(ncol(spe)), spe$code) %>%
+  map(~ if (length(.x) > cells_per_section) sample(.x, cells_per_section) else .x) %>%
+  unlist(use.names = F)
+cof_sub <- assay(spe, "counts")[, cof_idx]
+
 bg_peak <- function(v) {
-  d <- density(log(v[v > 0]), n = 512)
+  d <- density(log(v[!is.na(v) & v > 0]), n = 512)
   pk <- which(diff(sign(diff(d$y))) == -2) + 1
   pk <- pk[d$y[pk] > 0.05 * max(d$y)]
   if (!length(pk)) pk <- which.max(d$y)
@@ -116,117 +158,119 @@ bg_peak <- function(v) {
 }
 
 cofactor <- apply(cof_sub, 1, bg_peak)
-
-# manual overrides, e.g. c(Iba1 = 120)
-cofactor_manual <- c()
 if (length(cofactor_manual)) cofactor[names(cofactor_manual)] <- cofactor_manual
-stopifnot(identical(names(cofactor), rownames(sce)))
+stopifnot(identical(names(cofactor), rownames(spe)))
 
-as.data.frame(t(cof_sub)) %>% 
-  pivot_longer(everything(), names_to = "marker") %>% 
-  filter(value > 0) %>% 
-  ggplot(aes(x = value)) + 
-  geom_density() + 
-  geom_vline(data = enframe(cofactor, name = "marker", value = "cofactor"),
-             aes(xintercept = cofactor),
-             color = "firebrick") + 
-  scale_x_log10() + 
-  facet_wrap(. ~ marker, scales = "free") + 
+assay(spe, "asinh") <- asinh(assay(spe, "counts") / cofactor)
+
+# Background cutoffs (asinh scale) ----------------------------------------
+
+a0 <- asinh(1)
+asinh_sub <- asinh(cof_sub / cofactor)
+bg_sd <- apply(asinh_sub, 1, function(a) {
+  a <- a[!is.na(a) & a < a0]
+  if (length(a)) sqrt(mean((a - a0)^2)) else 0
+})
+cutoff <- a0 + cutoff_k * bg_sd
+if (length(cutoff_manual)) cutoff[names(cutoff_manual)] <- cutoff_manual
+
+marker_table <- tibble(marker = names(cofactor), cofactor = cofactor, bg_sd = bg_sd,
+                       cutoff_asinh = cutoff, cutoff_raw = cofactor * sinh(cutoff))
+write.csv(marker_table, paste0(results_dir, "marker_cofactors_cutoffs.csv"), row.names = F)
+
+p <- as_tibble(t(cof_sub)) %>%
+  pivot_longer(everything(), names_to = "marker") %>%
+  filter(value > 0) %>%
+  ggplot(aes(x = value)) +
+  geom_density() +
+  geom_vline(data = marker_table, aes(xintercept = cofactor), color = "firebrick") +
+  geom_vline(data = marker_table, aes(xintercept = cutoff_raw), color = "dodgerblue", linetype = 2) +
+  scale_x_log10() +
+  facet_wrap(. ~ marker, scales = "free") +
   theme_linedraw(base_size = 8)
+ggsave(paste0(results_dir, "cofactor_density.png"), p, width = 20, height = 16, dpi = 200)
 
-assay(sce, "asinh") <- asinh(assay(sce, "counts") / cofactor)
+rm(cof_sub, asinh_sub)
+gc()
 
-sce
+# Flags -------------------------------------------------------------------
 
-# Dimensional reduction ---------------------------------------------------
+limits <- size_limits[match(spe$cell_type, size_limits$cell_type), ]
+spe$flag_size <- spe$area_um2 <= limits$min_area | spe$area_um2 >= limits$max_area
 
-sce <- scater::runPCA(sce,
-                      scale = T,
-                      exprs_values = "asinh")
-sce
+spe$flag_region <- is.na(spe$region) | spe$region %in% c("unassigned", "multiple")
 
-# scater::plotPCA(sce,
-#         colour_by = "group")
-# 
-# scater::plotPCA(sce,
-#         colour_by = "batch")
-# 
-# scater::plotPCA(sce,
-#         colour_by = "code")
+flag_lineage <- rep(FALSE, ncol(spe))
+for (ct in names(canonical_markers)) {
+  sel <- which(spe$cell_type == ct)
+  mk <- canonical_markers[[ct]]
+  pos <- assay(spe, "asinh")[mk, sel, drop = F] >= cutoff[mk]
+  flag_lineage[sel] <- colSums(pos) == 0
+}
+spe$flag_lineage <- flag_lineage
 
-percent.var <- attr(reducedDim(sce), "percentVar")
-plot(percent.var, log="y", xlab="PC", ylab="Variance explained (%)")
-num_pcs <- 10
+spe$flag_section <- spe$code %in% failed_sections
 
-# plotReducedDim(sce, dimred = "PCA", ncomponents = 3, colour_by = "sample_id")
+flag_cols <- c("flag_size", "flag_region", "flag_lineage", "flag_section")
+flags <- as.matrix(as.data.frame(colData(spe)[, flag_cols]))
+spe$keep <- rowSums(flags) == 0
+reason <- rep("", ncol(spe))
+for (f in flag_cols) {
+  hit <- flags[, f] %in% TRUE
+  lab <- str_remove(f, "flag_")
+  reason[hit] <- if_else(reason[hit] == "", lab, paste(reason[hit], lab, sep = ";"))
+}
+spe$flag_reason <- reason
+rm(flags, reason)
 
-explain_pcs <- getExplanatoryPCs(sce,
-                                 variables = c("code",
-                                               "batch",
-                                               "cell_type",
-                                               # "group",
-                                               # "sex", "age",
-                                               "area_um2")
-)
+# Flag QC -----------------------------------------------------------------
 
-plotExplanatoryPCs(explain_pcs/100)
+flag_summary <- as.data.frame(colData(spe)) %>%
+  group_by(code, sample_id, group, cell_type) %>%
+  summarize(n = n(),
+            across(all_of(flag_cols), ~ mean(.x)),
+            kept = mean(keep),
+            .groups = "drop")
+write.csv(flag_summary, paste0(results_dir, "flag_summary.csv"), row.names = F)
 
-sce <- scater::runUMAP(sce,
-               dimred = "PCA",
-               ntop = num_pcs)
+p <- flag_summary %>%
+  pivot_longer(all_of(flag_cols), names_to = "flag", values_to = "frac") %>%
+  ggplot(aes(x = group, y = frac, color = group)) +
+  geom_jitter(width = 0.15, height = 0) +
+  facet_grid(flag ~ cell_type, scales = "free_y") +
+  labs(y = "Fraction of cells flagged (per section)") +
+  theme_linedraw(base_size = 9) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "none")
+ggsave(paste0(results_dir, "flag_fraction_by_group.png"), p, width = 12, height = 9, dpi = 200)
 
-scater::plotUMAP(sce,
-         colour_by = "cell_type")
+set.seed(1)
+plot_idx <- split(seq_len(ncol(spe)), spe$cell_type) %>%
+  map(~ if (length(.x) > 2e4) sample(.x, 2e4) else .x) %>%
+  unlist(use.names = F)
 
-dittoDimPlot(sce,
-             "NeuN",
-             assay = "asinh",
-             reduction.use = "UMAP")
+lineage_long <- map(unique(unlist(canonical_markers)), function(mk) {
+  own_types <- names(purrr::keep(canonical_markers, ~ mk %in% .x))
+  tibble(marker = mk,
+         value = assay(spe, "asinh")[mk, plot_idx],
+         own = spe$cell_type[plot_idx] %in% own_types)
+}) %>%
+  list_rbind()
 
-dittoDimPlot(sce,
-             "dist_vessel_um",
-             reduction.use = "UMAP")
+p <- lineage_long %>%
+  ggplot(aes(x = value, color = own)) +
+  geom_density() +
+  geom_vline(data = filter(marker_table, marker %in% unlist(canonical_markers)),
+             aes(xintercept = cutoff_asinh), linetype = 2) +
+  facet_wrap(. ~ marker, scales = "free") +
+  scale_color_manual(values = c(`TRUE` = "firebrick", `FALSE` = "gray50"),
+                     labels = c(`TRUE` = "own cell type", `FALSE` = "other cell types")) +
+  labs(x = "asinh intensity", color = NULL) +
+  theme_linedraw(base_size = 9)
+ggsave(paste0(results_dir, "canonical_marker_cutoffs.png"), p, width = 10, height = 6, dpi = 200)
 
-dittoDimPlot(sce,
-             "has_dpr",
-             reduction.use = "UMAP")
+table(spe$cell_type, spe$flag_reason)
 
-sce$touching_vessel <- if_else(sce$dist_vessel_um == 0, "Y", "N")
+# Save --------------------------------------------------------------------
 
-dittoDimPlot(sce,
-             "touching_vessel",
-             reduction.use = "UMAP")
-
-# 
-# scater::plotUMAP(sce,
-#          colour_by = "batch")
-
-# scater::plotUMAP(sce,
-#          colour_by = "code")
-
-# Harmony -----------------------------------------------------------------
-
-sce <- RunHarmony(sce,
-                  group.by.vars = "code")
-
-# explain_pcs <- getExplanatoryPCs(sce,
-#                                  variables = c("code",
-#                                                "batch",
-#                                                "group",
-#                                                "sex", "age",
-#                                                "area"),
-#                                  dimred = "HARMONY"
-# )
-# 
-# plotExplanatoryPCs(explain_pcs/100)
-
-sce <- scater::runUMAP(sce,
-                       dimred = "HARMONY",
-                       ntop = num_pcs,
-                       name = "HARMONY_UMAP")
-
-sce
-
-scater::plotUMAP(sce,
-                 colour_by = "code",
-                 dimred = "HARMONY_UMAP")
+saveRDS(spe, paste0(data_dir, "spe.rds"))
+spe
