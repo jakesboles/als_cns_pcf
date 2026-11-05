@@ -45,9 +45,8 @@ cutoff_k <- 2
 # e.g. list(CD4 = "myeloid", Vimentin = "myeloid")
 marker_extra_positive <- list()
 
-# manual overrides, e.g. c(`Iba-1` = 120)
+# manual cofactor overrides, e.g. c(`Iba-1` = 120); thresholds are tuned below
 cofactor_manual <- c()
-cutoff_manual <- c()
 
 # Sample key and demographics ---------------------------------------------
 
@@ -186,9 +185,7 @@ for (mk in canon) cofactor[mk] <- bg_peak(cof_sub[mk, ref_cells[[mk]]])
 if (length(cofactor_manual)) cofactor[names(cofactor_manual)] <- cofactor_manual
 stopifnot(identical(names(cofactor), rownames(spe)))
 
-assay(spe, "asinh") <- asinh(assay(spe, "counts") / cofactor)
-
-# Background cutoffs (asinh scale) ----------------------------------------
+# Automatic background cutoffs (asinh scale) ------------------------------
 
 a0 <- asinh(1)
 asinh_sub <- asinh(cof_sub / cofactor)
@@ -198,22 +195,14 @@ left_sd <- function(a) {
 }
 bg_sd <- apply(asinh_sub, 1, left_sd)
 for (mk in canon) bg_sd[mk] <- left_sd(asinh_sub[mk, ref_cells[[mk]]])
-cutoff <- a0 + cutoff_k * bg_sd
-if (length(cutoff_manual)) cutoff[names(cutoff_manual)] <- cutoff_manual
-
-marker_table <- tibble(marker = names(cofactor), cofactor = cofactor, bg_sd = bg_sd,
-                       cutoff_asinh = cutoff, cutoff_raw = cofactor * sinh(cutoff),
-                       background_from = if_else(names(cofactor) %in% canon,
-                                                 "other cell types", "all cells"))
-write.csv(marker_table, paste0(results_dir, "marker_cofactors_cutoffs.csv"), row.names = F)
+threshold_auto <- cofactor * sinh(a0 + cutoff_k * bg_sd)
 
 p <- as_tibble(t(cof_sub)) %>%
   pivot_longer(everything(), names_to = "marker") %>%
   filter(value > 0) %>%
   ggplot(aes(x = value)) +
   geom_density() +
-  geom_vline(data = marker_table, aes(xintercept = cofactor), color = "firebrick") +
-  geom_vline(data = marker_table, aes(xintercept = cutoff_raw), color = "dodgerblue", linetype = 2) +
+  geom_vline(data = enframe(cofactor, "marker", "cofactor"), aes(xintercept = cofactor), color = "firebrick") +
   scale_x_log10() +
   facet_wrap(. ~ marker, scales = "free") +
   theme_linedraw(base_size = 8)
@@ -222,6 +211,82 @@ ggsave(paste0(results_dir, "cofactor_density.png"), p, width = 20, height = 16, 
 rm(cof_sub, asinh_sub)
 gc()
 
+# Tune canonical marker thresholds ----------------------------------------
+
+set.seed(1)
+plot_idx <- split(seq_len(ncol(spe)), spe$cell_type) %>%
+  map(~ if (length(.x) > 2e4) sample(.x, 2e4) else .x) %>%
+  unlist(use.names = F)
+
+lineage_long <- map(canon, function(mk) {
+  tibble(marker = mk,
+         value = assay(spe, "counts")[mk, plot_idx],
+         cell_type = spe$cell_type[plot_idx],
+         expected = spe$cell_type[plot_idx] %in% pos_types[[mk]])
+}) %>%
+  list_rbind() %>%
+  filter(value > 0)
+
+plot_thresholds <- function(thr) {
+  lines <- tibble(marker = canon, cofactor = cofactor[canon], auto = threshold_auto[canon], threshold = thr[canon])
+  lineage_long %>%
+    ggplot(aes(x = value, fill = expected)) +
+    geom_density(alpha = 0.6) +
+    geom_vline(data = lines, aes(xintercept = cofactor), color = "firebrick") +
+    geom_vline(data = lines, aes(xintercept = auto), color = "gray40", linetype = 3) +
+    geom_vline(data = lines, aes(xintercept = threshold), color = "dodgerblue", linetype = 2) +
+    scale_x_log10() +
+    scale_fill_manual(values = c(`TRUE` = "firebrick", `FALSE` = "gray70"),
+                      labels = c(`TRUE` = "expected positive", `FALSE` = "background reference")) +
+    facet_grid(cell_type ~ marker, scales = "free") +
+    labs(x = "raw intensity", fill = NULL) +
+    theme_linedraw(base_size = 8)
+}
+
+lineage_negative <- function(thr) {
+  neg <- rep(FALSE, ncol(spe))
+  for (ct in names(canonical_markers)) {
+    sel <- which(spe$cell_type == ct)
+    mk <- canonical_markers[[ct]]
+    neg[sel] <- colSums(assay(spe, "counts")[mk, sel, drop = F] >= thr[mk]) == 0
+  }
+  neg
+}
+
+preview_flags <- function(thr) {
+  tibble(cell_type = spe$cell_type, group = spe$group, flagged = lineage_negative(thr)) %>%
+    group_by(cell_type, group) %>%
+    summarize(pct_flagged = round(100 * mean(flagged), 1), .groups = "drop") %>%
+    pivot_wider(names_from = group, values_from = pct_flagged)
+}
+
+# raw intensity read off the plot's x-axis, e.g. c(`Iba-1` = 800, NeuN = 150)
+# edit and re-run from here through preview_flags() until the blue lines sit where you want
+threshold_manual <- numeric()
+
+bad_thr <- setdiff(names(threshold_manual), canon)
+if (length(bad_thr)) stop("threshold_manual names aren't canonical markers: ", paste(bad_thr, collapse = ", "))
+threshold <- threshold_auto
+if (length(threshold_manual)) threshold[names(threshold_manual)] <- threshold_manual
+
+plot_thresholds(threshold)
+preview_flags(threshold)
+
+# Save thresholds and transform -------------------------------------------
+
+ggsave(paste0(results_dir, "canonical_marker_by_cell_type.png"), plot_thresholds(threshold),
+       width = 16, height = 10, dpi = 200)
+
+marker_table <- tibble(marker = names(cofactor), cofactor = cofactor, bg_sd = bg_sd,
+                       threshold_auto = threshold_auto, threshold = threshold,
+                       threshold_asinh = asinh(threshold / cofactor),
+                       manual = names(cofactor) %in% names(threshold_manual),
+                       background_from = if_else(names(cofactor) %in% canon,
+                                                 "other cell types", "all cells"))
+write.csv(marker_table, paste0(results_dir, "marker_cofactors_thresholds.csv"), row.names = F)
+
+assay(spe, "asinh") <- asinh(assay(spe, "counts") / cofactor)
+
 # Flags -------------------------------------------------------------------
 
 limits <- size_limits[match(spe$cell_type, size_limits$cell_type), ]
@@ -229,14 +294,7 @@ spe$flag_size <- spe$area_um2 <= limits$min_area | spe$area_um2 >= limits$max_ar
 
 spe$flag_region <- is.na(spe$region) | spe$region %in% c("unassigned", "multiple")
 
-flag_lineage <- rep(FALSE, ncol(spe))
-for (ct in names(canonical_markers)) {
-  sel <- which(spe$cell_type == ct)
-  mk <- canonical_markers[[ct]]
-  pos <- assay(spe, "asinh")[mk, sel, drop = F] >= cutoff[mk]
-  flag_lineage[sel] <- colSums(pos) == 0
-}
-spe$flag_lineage <- flag_lineage
+spe$flag_lineage <- lineage_negative(threshold)
 
 flag_cols <- c("flag_size", "flag_region", "flag_lineage")
 flags <- as.matrix(as.data.frame(colData(spe)[, flag_cols]))
@@ -269,34 +327,6 @@ p <- flag_summary %>%
   theme_linedraw(base_size = 9) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "none")
 ggsave(paste0(results_dir, "flag_fraction_by_group.png"), p, width = 12, height = 9, dpi = 200)
-
-set.seed(1)
-plot_idx <- split(seq_len(ncol(spe)), spe$cell_type) %>%
-  map(~ if (length(.x) > 2e4) sample(.x, 2e4) else .x) %>%
-  unlist(use.names = F)
-
-lineage_long <- map(canon, function(mk) {
-  tibble(marker = mk,
-         value = assay(spe, "counts")[mk, plot_idx],
-         cell_type = spe$cell_type[plot_idx],
-         expected = spe$cell_type[plot_idx] %in% pos_types[[mk]])
-}) %>%
-  list_rbind() %>%
-  filter(value > 0)
-
-p <- lineage_long %>%
-  ggplot(aes(x = value, fill = expected)) +
-  geom_density(alpha = 0.6) +
-  geom_vline(data = filter(marker_table, marker %in% canon), aes(xintercept = cofactor), color = "firebrick") +
-  geom_vline(data = filter(marker_table, marker %in% canon), aes(xintercept = cutoff_raw),
-             color = "dodgerblue", linetype = 2) +
-  scale_x_log10() +
-  scale_fill_manual(values = c(`TRUE` = "firebrick", `FALSE` = "gray70"),
-                    labels = c(`TRUE` = "expected positive", `FALSE` = "background reference")) +
-  facet_grid(cell_type ~ marker, scales = "free") +
-  labs(x = "raw intensity", fill = NULL) +
-  theme_linedraw(base_size = 8)
-ggsave(paste0(results_dir, "canonical_marker_by_cell_type.png"), p, width = 16, height = 10, dpi = 200)
 
 table(spe$cell_type, spe$flag_reason)
 
