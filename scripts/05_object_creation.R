@@ -341,3 +341,9 @@ table(spe$cell_type, spe$flag_reason)
 
 saveRDS(spe, paste0(data_dir, "spe.rds"))
 spe
+
+# Export flags for 06 -----------------------------------------------------
+
+arrow::write_parquet(as.data.frame(colData(spe))[, c("code", "cell_id", "cell_type", "area_um2",
+                                                     flag_cols, "keep", "flag_reason")],
+                     paste0(data_dir, "cell_flags.parquet"))
