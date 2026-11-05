@@ -85,8 +85,8 @@ reducedDim(sce, "UMAP") <- uwot::umap(reducedDim(sce, "PCA")[, 1:num_pcs],
                                       n_sgd_threads = n_cores,
                                       verbose = T)
 
-saveRDS(list(PCA = reducedDim(sce, "PCA"), UMAP = reducedDim(sce, "UMAP")),
-        paste0(data_dir, "reduced_dims.rds"))
+# saveRDS(list(PCA = reducedDim(sce, "PCA"), UMAP = reducedDim(sce, "UMAP")),
+#         paste0(data_dir, "reduced_dims.rds"))
 
 save_umap <- function(p, file, w){
   ggsave(filename = paste0(results_dir, file),
@@ -109,30 +109,50 @@ p <- dittoDimPlot(sce,
                   "code",
                   reduction.use = "UMAP")
 save_umap(p, "raw_umap_sample.png", 9)
+# desperately need integration! 
 
 # Harmony -----------------------------------------------------------------
 
-# sce <- RunHarmony(sce,
-#                   group.by.vars = "code")
-# 
-# explain_pcs <- getExplanatoryPCs(sce,
-#                                  variables = c("code",
-#                                                "batch",
-#                                                "group",
-#                                                "sex", "age",
-#                                                "area"),
-#                                  dimred = "HARMONY"
-# )
-# 
-# plotExplanatoryPCs(explain_pcs/100)
-# 
-# reducedDim(sce, "HARMONY_UMAP") <- uwot::umap(reducedDim(sce, "HARMONY")[, 1:num_pcs],
-#                                               n_neighbors = 15,
-#                                               n_threads = n_cores,
-#                                               n_sgd_threads = n_cores)
-# 
-# sce
-# 
-# scater::plotUMAP(sce,
-#                  colour_by = "code",
-#                  dimred = "HARMONY_UMAP")
+sce <- RunHarmony(sce,
+                  group.by.vars = "code")
+
+explain_pcs <- getExplanatoryPCs(sce,
+                                 variables = c("code",
+                                               "batch",
+                                               "group",
+                                               "sex", "age",
+                                               "area"),
+                                 dimred = "HARMONY"
+)
+
+png(filename = paste0(results_dir, "explanatory_harmony.png"),
+    units = "in", res = 600,
+    height = 6, width = 7,
+    bg = "white")
+plotExplanatoryPCs(explain_pcs/100)
+dev.off()
+
+reducedDim(sce, "HARMONY_UMAP") <- uwot::umap(reducedDim(sce, "HARMONY")[, 1:num_pcs],
+                                              n_neighbors = 15,
+                                              n_threads = n_cores,
+                                              n_sgd_threads = n_cores)
+
+sce
+
+saveRDS(list(HARMONY = reducedDim(sce, "HARMONY", HARMONY_UMAP = reducedDim(sce, "HARMONY_UMAP"))),
+        paste0(data_dir, "reduced_dims_harmony.rds"))
+
+p <- dittoDimPlot(sce,
+                  "cell_type",
+                  reduction.use = "HARMONY_UMAP")
+save_umap(p, "harmony_umap_celltype.png", 6)
+
+p <- dittoDimPlot(sce,
+                  "batch",
+                  reduction.use = "HARMONY_UMAP")
+save_umap(p, "harmony_umap_batch.png", 6)
+
+p <- dittoDimPlot(sce,
+                  "code",
+                  reduction.use = "HARMONY_UMAP")
+save_umap(p, "harmony_umap_sample.png", 9)
