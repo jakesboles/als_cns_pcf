@@ -262,7 +262,14 @@ preview_flags <- function(thr) {
 
 # raw intensity read off the plot's x-axis, e.g. c(`Iba-1` = 800, NeuN = 150)
 # edit and re-run from here through preview_flags() until the blue lines sit where you want
-threshold_manual <- numeric()
+threshold_manual <- c('CD3e' = (cofactor[['CD3e']] * threshold_auto[['CD3e']])^(1/2),
+                            'CD4' = threshold_auto[['CD4']],
+                            'CD8' = threshold_auto[['CD8']],
+                            'GFAP' = cofactor[["GFAP"]],
+                            'Iba-1' = (cofactor[['Iba-1']] * threshold_auto[["Iba-1"]])^(1/2),
+                            'NeuN' = cofactor[['NeuN']],
+                            'Olig-2' = threshold_auto[["Olig-2"]],
+                            'Vimentin' = cofactor[["Vimentin"]])
 
 bad_thr <- setdiff(names(threshold_manual), canon)
 if (length(bad_thr)) stop("threshold_manual names aren't canonical markers: ", paste(bad_thr, collapse = ", "))
