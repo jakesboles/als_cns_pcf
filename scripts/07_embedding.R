@@ -13,6 +13,10 @@ results_dir <- "results/07_embedding/"
 dir.create(results_dir,
            showWarnings = F,
            recursive = T)
+data_dir <- "data/07_embedding/"
+dir.create(data_dir, showWarnings = F, recursive = T)
+
+n_cores <- as.integer(Sys.getenv("SLURM_CPUS_PER_TASK", "1"))
 
 sce <- readRDS("data/05_object_creation/spe.rds")
 sce <- sce[, sce$keep]
@@ -54,7 +58,9 @@ num_pcs <- 12
 
 # plotReducedDim(sce, dimred = "PCA", ncomponents = 3, colour_by = "sample_id")
 
-explain_pcs <- getExplanatoryPCs(sce,
+set.seed(1)
+explain_idx <- sample(ncol(sce), min(ncol(sce), 2e5))
+explain_pcs <- getExplanatoryPCs(sce[, explain_idx],
                                  variables = c("code",
                                                "batch",
                                                "cell_type",
@@ -72,31 +78,37 @@ dev.off()
 # code/batch explain the most variance - integration likely needed
 
 # check if integration is needed with UMAP
-sce <- scater::runUMAP(sce,
-               dimred = "PCA",
-               ntop = num_pcs)
+set.seed(1)
+reducedDim(sce, "UMAP") <- uwot::umap(reducedDim(sce, "PCA")[, 1:num_pcs],
+                                      n_neighbors = 15,
+                                      n_threads = n_cores,
+                                      n_sgd_threads = n_cores,
+                                      verbose = T)
 
-save_umap <- function(file, w){
+saveRDS(list(PCA = reducedDim(sce, "PCA"), UMAP = reducedDim(sce, "UMAP")),
+        paste0(data_dir, "reduced_dims.rds"))
+
+save_umap <- function(p, file, w){
   ggsave(filename = paste0(results_dir, file),
-         plot = last_plot(),
+         plot = p,
          units = "in", dpi = 600,
          height = 5, width = w)
 }
 
-dittoDimPlot(sce,
-             "cell_type",
-             reduction.use = "UMAP")
-save_umap("raw_umap_celltype.png", 6)
+p <- dittoDimPlot(sce,
+                  "cell_type",
+                  reduction.use = "UMAP")
+save_umap(p, "raw_umap_celltype.png", 6)
 
-dittoDimPlot(sce,
-             "batch",
-             reduction.use = "UMAP")
-save_umap("raw_umap_batch.png", 6)
+p <- dittoDimPlot(sce,
+                  "batch",
+                  reduction.use = "UMAP")
+save_umap(p, "raw_umap_batch.png", 6)
 
-dittoDimPlot(sce,
-             "code",
-             reduction.use = "UMAP")
-save_umap("raw_umap_sample.png", 9)
+p <- dittoDimPlot(sce,
+                  "code",
+                  reduction.use = "UMAP")
+save_umap(p, "raw_umap_sample.png", 9)
 
 # Harmony -----------------------------------------------------------------
 
@@ -114,10 +126,10 @@ save_umap("raw_umap_sample.png", 9)
 # 
 # plotExplanatoryPCs(explain_pcs/100)
 # 
-# sce <- scater::runUMAP(sce,
-#                        dimred = "HARMONY",
-#                        ntop = num_pcs,
-#                        name = "HARMONY_UMAP")
+# reducedDim(sce, "HARMONY_UMAP") <- uwot::umap(reducedDim(sce, "HARMONY")[, 1:num_pcs],
+#                                               n_neighbors = 15,
+#                                               n_threads = n_cores,
+#                                               n_sgd_threads = n_cores)
 # 
 # sce
 # 
