@@ -20,22 +20,23 @@ channels_drop <- c("DAPI", "Tau (phospho T181)", "Tau (phospho S396)",
                            "EPR2488", "Tau (phospho T205)", "A-beta")
 
 canonical_markers <- list(
-  astrocytes = c("Vimentin", "GFAP"),
+  astrocyte = c("Vimentin", "GFAP"),
   cd4_tcell = c("CD4", "CD3e"),
   cd8_tcell = c("CD8", "CD3e"),
-  cortical_neurons = c("NeuN"),
+  cortical_neuron = c("NeuN"),
   myeloid = c("Iba-1"),
   oligodendrocyte = c("Olig-2")
 )
 
+# checked reasonable size limits in Qupath 11/5/26
 size_limits <- tribble(
   ~cell_type,         ~min_area, ~max_area,
-  "astrocytes",       40,        250,
+  "astrocyte",       40,        440,
   "cd4_tcell",        10,        Inf,
   "cd8_tcell",        10,        Inf,
-  "cortical_neurons", 40,        400,
-  "myeloid",          40,        400,
-  "oligodendrocyte",  10,        60
+  "cortical_neuron", 40,        Inf,
+  "myeloid",          38,        Inf,
+  "oligodendrocyte",  8,        200
 )
 
 cells_per_section <- 5000
