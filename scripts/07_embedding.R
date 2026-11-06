@@ -140,7 +140,8 @@ reducedDim(sce, "HARMONY_UMAP") <- uwot::umap(reducedDim(sce, "HARMONY")[, 1:num
 
 sce
 
-saveRDS(list(HARMONY = reducedDim(sce, "HARMONY", HARMONY_UMAP = reducedDim(sce, "HARMONY_UMAP"))),
+saveRDS(list(HARMONY = reducedDim(sce, "HARMONY"), 
+             HARMONY_UMAP = reducedDim(sce, "HARMONY_UMAP")),
         paste0(data_dir, "reduced_dims_harmony.rds"))
 
 p <- dittoDimPlot(sce,
