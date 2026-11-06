@@ -54,7 +54,12 @@ sce
 # scater::plotPCA(sce,
 #         colour_by = "code")
 
-percent.var <- attr(reducedDim(sce), "percentVar")
+# PCA loadings ------------------------------------------------------------
+
+rotation <- attr(reducedDim(sce, "PCA"), "rotation")
+percent_var <- attr(reducedDim(sce, "PCA"), "percentVar")
+
+write.csv(rotation, paste0(results_dir, "pca_loadings.csv"))
 
 png(filename = paste0(results_dir, "pca_elbow.png"),
     units = "in", res = 600,
@@ -63,7 +68,36 @@ png(filename = paste0(results_dir, "pca_elbow.png"),
 plot(percent.var, log="y", xlab="PC", ylab="Variance explained (%)")
 dev.off()
 
-num_pcs <- 12
+png(paste0(results_dir, "pca_loadings_heatmap.png"), units = "in", res = 300, height = 14, width = 7, bg = "white")
+pheatmap(rotation,
+         color = colorRampPalette(c("dodgerblue", "white", "firebrick"))(101),
+         breaks = seq(-max(abs(rotation)), max(abs(rotation)), length.out = 102),
+         cluster_cols = F,
+         labels_col = paste0(colnames(rotation), " (", round(percent_var, 1), "%)"),
+         fontsize_row = 7)
+dev.off()
+
+top_loadings <- as.data.frame(rotation) %>%
+  rownames_to_column("marker") %>%
+  pivot_longer(-marker, names_to = "pc", values_to = "loading") %>%
+  mutate(pc = factor(pc, levels = colnames(rotation))) %>%
+  group_by(pc) %>%
+  slice_max(abs(loading), n = 10) %>%
+  ungroup() %>%
+  arrange(pc, loading) %>%
+  mutate(y = factor(paste(marker, pc, sep = "___"), levels = unique(paste(marker, pc, sep = "___"))))
+
+p <- top_loadings %>%
+  ggplot(aes(x = loading, y = y, fill = loading > 0)) +
+  geom_col(show.legend = F) +
+  scale_y_discrete(labels = function(x) sub("___.*$", "", x)) +
+  facet_wrap(. ~ pc, scales = "free_y", ncol = 4) +
+  scale_fill_manual(values = c(`TRUE` = "firebrick", `FALSE` = "dodgerblue")) +
+  labs(y = NULL) +
+  theme_linedraw(base_size = 8)
+ggsave(paste0(results_dir, "pca_top_loadings.png"), p, width = 12, height = 10, dpi = 300)
+
+num_pcs <- 14
 stopifnot(num_pcs <= ncol(reducedDim(sce, "PCA")))
 
 # plotReducedDim(sce, dimred = "PCA", ncomponents = 3, colour_by = "sample_id")
@@ -95,7 +129,8 @@ reducedDim(sce, "UMAP") <- uwot::umap(reducedDim(sce, "PCA")[, 1:num_pcs],
                                       n_sgd_threads = n_cores,
                                       verbose = T)
 
-saveRDS(list(PCA = reducedDim(sce, "PCA"), UMAP = reducedDim(sce, "UMAP")),
+saveRDS(list(PCA = reducedDim(sce, "PCA"), 
+             UMAP = reducedDim(sce, "UMAP")),
         paste0(data_dir, "reduced_dims.rds"))
 
 save_umap <- function(p, file, w){
