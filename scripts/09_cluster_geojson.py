@@ -14,8 +14,8 @@ from pcf_utils import log, find_files, load_cell_geoms
 
 sys.stdout.reconfigure(line_buffering=True)
 
-COLORS = {"astrocytes": [40, 170, 40], "cd4_tcell": [0, 190, 255], "cd8_tcell": [30, 60, 220],
-          "cortical_neurons": [150, 60, 200], "myeloid": [220, 30, 30], "oligodendrocyte": [255, 170, 0]}
+COLORS = {"astrocyte": [40, 170, 40], "cd4_tcell": [0, 190, 255], "cd8_tcell": [30, 60, 220],
+          "cortical_neuron": [150, 60, 200], "myeloid": [220, 30, 30], "oligodendrocyte": [255, 170, 0]}
 OTHER = [120, 120, 120]
 MARKERS = ["NeuN", "GFAP", "Vimentin", "Iba-1", "Olig-2", "CD3e", "CD4", "CD8"]
 
@@ -57,7 +57,8 @@ def main():
   p.add_argument("--clusters", nargs="*")
   p.add_argument("--codes", nargs="*")
   p.add_argument("--markers", nargs="*", default=MARKERS)
-  p.add_argument("--clusters_file", default="data/08_loadings_clustering/clusters.parquet")
+  p.add_argument("--group")
+  p.add_argument("--clusters_file")
   p.add_argument("--flags", default="data/05_object_creation/cell_flags.parquet")
   p.add_argument("--quant_dir", default="data/01_quantify_cells/")
   p.add_argument("--cells_dir", default="annotations/cells")
@@ -65,6 +66,11 @@ def main():
   p.add_argument("--workers", type=int, default=int(os.environ.get("SLURM_CPUS_PER_TASK", 1)))
   args = p.parse_args()
 
+  if args.clusters_file is None:
+    args.clusters_file = (os.path.join("data/07_embedding", args.group, "clusters.parquet") if args.group
+                          else "data/08_loadings_clustering/clusters.parquet")
+  if not os.path.exists(args.clusters_file):
+    sys.exit(f"{args.clusters_file} not found")
   col = f"leiden_{args.resolution}"
   cl = pd.read_parquet(args.clusters_file)
   if col not in cl.columns:
@@ -98,7 +104,7 @@ def main():
     for code, paths in by_code.items():
       cell_files[code][cell_type] = paths
 
-  args.out_dir = os.path.join(args.results_dir, col)
+  args.out_dir = os.path.join(args.results_dir, *([args.group] if args.group else []), col)
   os.makedirs(args.out_dir, exist_ok=True)
   pd.crosstab(cells["cell_type"], cells["cluster"], margins=True).to_csv(
     os.path.join(args.out_dir, "cluster_counts_all.csv"))
