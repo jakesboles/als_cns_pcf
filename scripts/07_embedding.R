@@ -119,9 +119,10 @@ sce <- RunHarmony(sce,
 explain_pcs <- getExplanatoryPCs(sce,
                                  variables = c("code",
                                                "batch",
+                                               "cell_type",
                                                "group",
                                                "sex", "age",
-                                               "area"),
+                                               "area_um2"),
                                  dimred = "HARMONY"
 )
 
