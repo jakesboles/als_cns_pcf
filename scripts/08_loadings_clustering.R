@@ -14,7 +14,7 @@ data_dir <- "data/08_loadings_clustering/"
 dir.create(results_dir, showWarnings = F, recursive = T)
 dir.create(data_dir, showWarnings = F, recursive = T)
 
-num_pcs <- 12
+num_pcs <- 14
 cluster_on <- "HARMONY"
 leiden_res <- c(0.1, 0.3, 0.5, 1)
 snn_k <- 15
@@ -31,43 +31,10 @@ for (nm in names(rd)) {
 }
 rm(rd)
 
-# PCA loadings ------------------------------------------------------------
-
-stopifnot(!is.null(attr(reducedDim(sce, "PCA"), "rotation")),
-          all(rownames(attr(reducedDim(sce, "PCA"), "rotation")) %in% rownames(sce)))
-rotation <- attr(reducedDim(sce, "PCA"), "rotation")[, 1:num_pcs]
-percent_var <- attr(reducedDim(sce, "PCA"), "percentVar")[1:num_pcs]
-
-write.csv(rotation, paste0(results_dir, "pca_loadings.csv"))
-
-png(paste0(results_dir, "pca_loadings_heatmap.png"), units = "in", res = 300, height = 14, width = 7, bg = "white")
-pheatmap(rotation,
-         color = colorRampPalette(c("dodgerblue", "white", "firebrick"))(101),
-         breaks = seq(-max(abs(rotation)), max(abs(rotation)), length.out = 102),
-         cluster_cols = F,
-         labels_col = paste0(colnames(rotation), " (", round(percent_var, 1), "%)"),
-         fontsize_row = 7)
-dev.off()
-
-top_loadings <- as.data.frame(rotation) %>%
-  rownames_to_column("marker") %>%
-  pivot_longer(-marker, names_to = "pc", values_to = "loading") %>%
-  mutate(pc = factor(pc, levels = colnames(rotation))) %>%
-  group_by(pc) %>%
-  slice_max(abs(loading), n = 10) %>%
-  ungroup() %>%
-  arrange(pc, loading) %>%
-  mutate(y = factor(paste(marker, pc, sep = "___"), levels = unique(paste(marker, pc, sep = "___"))))
-
-p <- top_loadings %>%
-  ggplot(aes(x = loading, y = y, fill = loading > 0)) +
-  geom_col(show.legend = F) +
-  scale_y_discrete(labels = function(x) sub("___.*$", "", x)) +
-  facet_wrap(. ~ pc, scales = "free_y", ncol = 4) +
-  scale_fill_manual(values = c(`TRUE` = "firebrick", `FALSE` = "dodgerblue")) +
-  labs(y = NULL) +
-  theme_linedraw(base_size = 8)
-ggsave(paste0(results_dir, "pca_top_loadings.png"), p, width = 12, height = 10, dpi = 300)
+# dittoDimPlot(sce,
+#              "cell_type",
+#              reduction.use = "HARMONY_UMAP",
+#              order = 'randomize')
 
 # Leiden clustering -------------------------------------------------------
 

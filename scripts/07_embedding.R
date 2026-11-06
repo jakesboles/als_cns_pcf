@@ -67,7 +67,7 @@ png(filename = paste0(results_dir, "pca_elbow.png"),
     units = "in", res = 600,
     height = 4, width = 5,
     bg = "white")
-plot(percent.var, log="y", xlab="PC", ylab="Variance explained (%)")
+plot(percent_var, log="y", xlab="PC", ylab="Variance explained (%)")
 dev.off()
 
 png(paste0(results_dir, "pca_loadings_heatmap.png"), units = "in", res = 300, height = 14, width = 7, bg = "white")
