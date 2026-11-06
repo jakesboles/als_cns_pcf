@@ -20,16 +20,19 @@ snn_k <- 15
 sce <- readRDS("data/05_object_creation/spe.rds")
 sce <- sce[, sce$keep]
 
-rd <- readRDS("data/07_embedding/reduced_dims_harmony.rds")
+rd <- c(readRDS("data/07_embedding/reduced_dims.rds"),
+        readRDS("data/07_embedding/reduced_dims_harmony.rds"))
 for (nm in names(rd)) {
   if (!is.null(rownames(rd[[nm]]))) stopifnot(identical(rownames(rd[[nm]]), colnames(sce)))
   stopifnot(nrow(rd[[nm]]) == ncol(sce))
   reducedDim(sce, nm) <- rd[[nm]]
 }
+rm(rd)
 
 # PCA loadings ------------------------------------------------------------
 
-sce <- scater::runPCA(sce, scale = T, exprs_values = "asinh")
+stopifnot(!is.null(attr(reducedDim(sce, "PCA"), "rotation")),
+          setequal(rownames(attr(reducedDim(sce, "PCA"), "rotation")), rownames(sce)))
 rotation <- attr(reducedDim(sce, "PCA"), "rotation")[, 1:num_pcs]
 percent_var <- attr(reducedDim(sce, "PCA"), "percentVar")[1:num_pcs]
 
