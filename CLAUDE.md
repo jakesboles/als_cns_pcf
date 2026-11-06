@@ -12,6 +12,7 @@ Working notes for Claude Code sessions on this repo: observations about the data
 6. This session environment has **no cluster access, no real data, and no R install**. Anything written is reasoning-based, not executed. Always say so rather than implying something was tested.
 7. Ask on genuine judgment calls (methodology, ambiguous design, anything that changes semantics) instead of guessing. When flagging a bug, state confidence; apparent bugs have previously turned out to compensate for real upstream data quirks (see sister repo history).
 8. **Audit downstream effects of every change.** Before opening a PR, trace every object/column the change touches through the rest of the script (names, column order, classes, positional indexing) and fix knock-on breakage in the same PR. Added after PR 2, where the user had to clean up fallout by hand (see Troubleshooting history).
+9. **R scripts wrap their `library()` calls in `suppressPackageStartupMessages({ ... })`** at the top (user default, 2026-11-06; PR 22), right after the `dyn.load()` libxml2 line where present. Only startup/attach/masking messages are hidden; a package that fails to load still errors.
 
 ## What this project is
 

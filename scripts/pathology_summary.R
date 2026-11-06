@@ -1,8 +1,10 @@
-library(tidyverse)
-library(ggplot2)
-library(janitor)
-library(ggbeeswarm)
-library(ggpubr)
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(ggplot2)
+  library(janitor)
+  library(ggbeeswarm)
+  library(ggpubr)
+})
 
 setwd("/projects/b1169/boles/als_cns_pcf")
 
