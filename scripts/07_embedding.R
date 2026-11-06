@@ -31,6 +31,11 @@ arrow::write_parquet(as.data.frame(colData(sce))[, c("code", "cell_id", "cell_ty
 
 # Dimensional reduction ---------------------------------------------------
 
+pca_features <- c("TMEM119", "MAP-2", "LYVE1", "S100B",
+                  "Olig-2", "CD3e", "CD4",
+                  "NeuN", "GFAP", "Vimentin", "AQP4", "CD11c",
+                  "Iba-1", "CD163", "CD8")
+
 sce <- scater::runPCA(sce,
                       scale = T,
                       exprs_values = "asinh")
@@ -85,8 +90,8 @@ reducedDim(sce, "UMAP") <- uwot::umap(reducedDim(sce, "PCA")[, 1:num_pcs],
                                       n_sgd_threads = n_cores,
                                       verbose = T)
 
-# saveRDS(list(PCA = reducedDim(sce, "PCA"), UMAP = reducedDim(sce, "UMAP")),
-#         paste0(data_dir, "reduced_dims.rds"))
+saveRDS(list(PCA = reducedDim(sce, "PCA"), UMAP = reducedDim(sce, "UMAP")),
+        paste0(data_dir, "reduced_dims.rds"))
 
 save_umap <- function(p, file, w){
   ggsave(filename = paste0(results_dir, file),
