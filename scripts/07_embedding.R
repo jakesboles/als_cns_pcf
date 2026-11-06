@@ -35,10 +35,14 @@ pca_features <- c("TMEM119", "MAP-2", "LYVE1", "S100B",
                   "Olig-2", "CD3e", "CD4",
                   "NeuN", "GFAP", "Vimentin", "AQP4", "CD11c",
                   "Iba-1", "CD163", "CD8")
+missing <- setdiff(pca_features, rownames(sce))
+if (length(missing)) stop("pca_features not in rownames(sce): ", paste(missing, collapse = ", "))
 
 sce <- scater::runPCA(sce,
                       scale = T,
-                      exprs_values = "asinh")
+                      exprs_values = "asinh",
+                      subset_row = pca_features,
+                      ncomponents = length(pca_features))
 sce
 
 # scater::plotPCA(sce,
@@ -60,6 +64,7 @@ plot(percent.var, log="y", xlab="PC", ylab="Variance explained (%)")
 dev.off()
 
 num_pcs <- 12
+stopifnot(num_pcs <= ncol(reducedDim(sce, "PCA")))
 
 # plotReducedDim(sce, dimred = "PCA", ncomponents = 3, colour_by = "sample_id")
 

@@ -32,7 +32,7 @@ rm(rd)
 # PCA loadings ------------------------------------------------------------
 
 stopifnot(!is.null(attr(reducedDim(sce, "PCA"), "rotation")),
-          setequal(rownames(attr(reducedDim(sce, "PCA"), "rotation")), rownames(sce)))
+          all(rownames(attr(reducedDim(sce, "PCA"), "rotation")) %in% rownames(sce)))
 rotation <- attr(reducedDim(sce, "PCA"), "rotation")[, 1:num_pcs]
 percent_var <- attr(reducedDim(sce, "PCA"), "percentVar")[1:num_pcs]
 
