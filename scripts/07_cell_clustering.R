@@ -30,16 +30,15 @@ if (cell_group == "") {
 if (!cell_group %in% names(cell_groups)) stop("Unknown PCF_GROUP ", cell_group, "; one of ", paste(names(cell_groups), collapse = ", "))
 message("Cell group: ", cell_group, " (", paste(cell_groups[[cell_group]], collapse = ", "), ")")
 
-results_dir <- paste0("results/07_embedding/", cell_group, "/")
-data_dir <- paste0("data/07_embedding/", cell_group, "/")
+results_dir <- paste0("results/07_cell_clustering/", cell_group, "/")
+data_dir <- paste0("data/07_cell_clustering/", cell_group, "/")
 dir.create(results_dir, showWarnings = F, recursive = T)
 dir.create(data_dir, showWarnings = F, recursive = T)
 
 n_cores <- as.integer(Sys.getenv("SLURM_CPUS_PER_TASK", "1"))
 
-pca_features <- c("TMEM119", "MAP-2", "LYVE1", "S100B",
-                  "Olig-2", "CD3e", "CD4",
-                  "NeuN", "GFAP", "Vimentin", "AQP4", "CD11c",
+pca_features <- c("TMEM119", "Olig-2", "CD3e", "CD4",
+                  "NeuN", "GFAP", "Vimentin", "CD11c",
                   "Iba-1", "CD163", "CD8")
 num_pcs <- 14
 leiden_res <- c(0.1, 0.3, 0.5, 1)
