@@ -87,6 +87,11 @@ rename_channels <- function(x) {
 channels <- map(set_names(codes), function(cd) {
   rename_channels(read.csv(paste0("results/01_quantify_cells/", cd, "_channels.csv"))$channel)
 })
+dup <- purrr::keep(channels, anyDuplicated)
+if (length(dup)) {
+  walk(names(dup), ~ message(.x, ": duplicated after renaming: ", paste(unique(dup[[.x]][duplicated(dup[[.x]])]), collapse = ", ")))
+  stop("Duplicate channel names after renaming")
+}
 
 features <- channels[[1]]
 mismatch <- purrr::keep(channels, ~ !setequal(.x, features))
@@ -118,6 +123,8 @@ pq <- map(codes, function(cd) {
   message("Loading ", cd)
   d1 <- read_step("01_quantify_cells", cd)
   names(d1) <- rename_channels(names(d1))
+  if (anyDuplicated(names(d1)) || !all(c(features, channels_drop) %in% names(d1)))
+    stop(cd, ": 01 parquet columns don't match its _channels.csv (duplicates or missing channels); rerun 01")
   d1 <- d1 %>% dplyr::select(-any_of(channels_drop))
   d2 <- read_step("02_annotate_regions", cd) %>% dplyr::select(cell_id, in_gm, in_wm, region)
   d3 <- read_step("03_annotate_pathology", cd) %>% dplyr::select(cell_id, any_of(c("has_dpr", "has_ptdp")))
