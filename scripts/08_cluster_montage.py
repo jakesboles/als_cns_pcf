@@ -1,7 +1,9 @@
 import os
 import sys
 import glob
+import io
 import html
+import base64
 import argparse
 import multiprocessing as mp
 from collections import defaultdict
@@ -20,6 +22,11 @@ sys.stdout.reconfigure(line_buffering=True)
 RENAME = {"Mac2/Galectin-3": "Galectin-3"}
 TYPE_COLORS = {"astrocyte": (40, 170, 40), "cd4_tcell": (0, 190, 255), "cd8_tcell": (30, 60, 220),
                "cortical_neuron": (150, 60, 200), "myeloid": (220, 30, 30), "oligodendrocyte": (255, 170, 0)}
+REQUIRED = {"myeloid": ["CD11c", "Iba-1", "TMEM119", "CD163"],
+            "cortical_neuron": ["MAP-2", "NeuN"],
+            "tcell": ["CD3e", "CD4", "CD8"],
+            "astrocyte": ["Vimentin", "GFAP", "Collagen IV", "Claudin-5"],
+            "oligodendrocyte": ["Olig-2"]}
 OTHER = (150, 150, 150)
 TARGET = (255, 0, 255)
 GAP = 4
@@ -46,6 +53,11 @@ def read_region(page, fh, y0, y1, x0, x1):
       if ay0 < ay1 and ax0 < ax1:
         out[ay0 - y0:ay1 - y0, ax0 - x0:ax1 - x0] = seg[ay0 - sy:ay1 - sy, ax0 - sx:ax1 - sx]
   return out
+
+
+def page(pages, i):
+  p = pages[i]
+  return p if isinstance(p, tifffile.TiffPage) else p.aspage()
 
 
 def renamed_columns(path, markers):
@@ -117,7 +129,7 @@ def crop_code(code, args, targets, needed, cell_files):
       cx, cy = xy.loc[t.cell_id]
       x0, y0 = int(round(cx)) - half, int(round(cy)) - half
       x1, y1 = x0 + 2 * half, y0 + 2 * half
-      crops = {c: read_region(pages[idx[c]], fh, y0, y1, x0, x1) for c in t.channels if c in idx}
+      crops = {c: read_region(page(pages, idx[c]), fh, y0, y1, x0, x1) for c in t.channels if c in idx}
       outlines = []
       for j in tree.query(shapely.box(x0, y0, x1, y1)):
         g = geoms.at[j, "geometry"]
@@ -129,7 +141,7 @@ def crop_code(code, args, targets, needed, cell_files):
   return code, out
 
 
-def render(crops, outlines, channels, ranges, scale, quality, path):
+def render(crops, outlines, channels, ranges, scale, quality):
   size = next(iter(crops.values())).shape[0] * scale if crops else 1
   strip = Image.new("RGB", (len(channels) * (size + GAP) - GAP, size), (0, 0, 0))
   for k, c in enumerate(channels):
@@ -143,10 +155,12 @@ def render(crops, outlines, channels, ranges, scale, quality, path):
       pts = [tuple(p) for p in (ring * scale)]
       d.line(pts, fill=TARGET if is_target else TYPE_COLORS.get(ct, OTHER), width=3 if is_target else 1)
     strip.paste(panel, (k * (size + GAP), 0))
-  strip.save(path, quality=quality)
+  buf = io.BytesIO()
+  strip.save(buf, format="JPEG", quality=quality)
+  return buf.getvalue()
 
 
-def write_html(path, group, res, channels, tops, diff, rows, counts, size):
+def write_html(path, group, res, channels, required, tops, diff, rows, counts, size):
   ratio = GAP / size
   legend = "".join(f'<span class="sw" style="border-color:rgb{c}"></span>{html.escape(t)} ' for t, c in TYPE_COLORS.items())
   nav = " ".join(f'<a href="#c{k}">{k}</a>' for k in tops)
@@ -159,6 +173,7 @@ a{{color:#8cf}}
 .top{{position:sticky;top:0;background:#111;padding:6px 0;z-index:2}}
 .head{{display:flex;margin-left:260px}}
 .h{{width:var(--h);margin-right:calc(var(--h)*{ratio:.5f});font-size:11px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}}
+.h.req{{color:#8cf}}
 .h.hi{{color:#ff0;font-weight:bold}}
 .row{{display:flex;align-items:center;margin:2px 0}}
 .lab{{width:256px;flex:none;font-size:11px;padding-right:4px;word-break:break-all}}
@@ -166,11 +181,12 @@ a{{color:#8cf}}
 h2{{margin:18px 0 4px}}
 </style></head><body>
 <div class="top"><b>{html.escape(group)}</b>, Leiden {res} &nbsp; panel size <input type="range" min="60" max="400" value="160" oninput="document.documentElement.style.setProperty('--h',this.value+'px')">
+&nbsp; headers: <span style="color:#8cf">always shown</span>, <span style="color:#ff0;font-weight:bold">cluster's top markers</span>
 &nbsp; outlines: <span class="sw" style="border-color:rgb{TARGET}"></span>sampled cell {legend}<br>clusters: {nav}</div>
 """]
   for k in tops:
     hi = set(tops[k])
-    hc = "".join(f'<div class="h{" hi" if c in hi else ""}">{html.escape(c)}</div>' for c in channels)
+    hc = "".join(f'<div class="h{" hi" if c in hi else " req" if c in required else ""}">{html.escape(c)}</div>' for c in channels)
     top_txt = ", ".join(f"{html.escape(m)} (+{diff.loc[k, m]:.2f})" for m in tops[k])
     parts.append(f'<h2 id="c{k}">Cluster {k}</h2><div>{counts[k]} cells; top markers vs rest of group (mean asinh difference): {top_txt}</div>'
                  f'<div class="head">{hc}</div>')
@@ -194,6 +210,7 @@ def main():
   p.add_argument("--scale", type=int, default=2)
   p.add_argument("--clip", type=float, nargs=2, default=[1, 99.5])
   p.add_argument("--quality", type=int, default=90)
+  p.add_argument("--no_embed", action="store_true")
   p.add_argument("--seed", type=int, default=1)
   p.add_argument("--clusters_dir", default="data/07_cell_clustering")
   p.add_argument("--flags", default="data/05_object_creation/cell_flags.parquet")
@@ -231,6 +248,10 @@ def main():
     if cl["code"].isna().any():
       sys.exit(f"{int(cl['code'].isna().sum())} {g} cells not in {args.flags}; rerun 05/07 consistently")
     members[g] = cl
+  bad = {g: [c for c in REQUIRED.get(g, []) if c not in cofactor] for g in groups}
+  bad = {g: v for g, v in bad.items() if v}
+  if bad:
+    sys.exit("REQUIRED markers not among 05's channels: " + "; ".join(f"{g}: {', '.join(v)}" for g, v in bad.items()))
   codes = sorted(set().union(*(set(m["code"]) for m in members.values())))
   log(f"{len(groups)} groups ({', '.join(groups)}), {col}, {len(codes)} sections")
 
@@ -251,15 +272,17 @@ def main():
     n = pd.concat(counts[g]).groupby(level=0).sum()
     order = sorted(n.index, key=lambda x: (len(x), x))
     s, n = s.loc[order], n.loc[order]
-    diff, tops, channels = enrichment(s, n, args.top)
+    diff, tops, enriched = enrichment(s, n, args.top)
+    required = REQUIRED.get(g, [])
+    channels = required + [c for c in enriched if c not in required]
     out_dir = os.path.join(args.results_dir, g, col)
-    os.makedirs(os.path.join(out_dir, "img"), exist_ok=True)
+    os.makedirs(os.path.join(out_dir, "img") if args.no_embed else out_dir, exist_ok=True)
     diff.to_csv(os.path.join(out_dir, "marker_enrichment.csv"))
     pd.DataFrame([(k, r + 1, m, diff.loc[k, m]) for k in tops for r, m in enumerate(tops[k])],
                  columns=["cluster", "rank", "marker", "mean_asinh_diff"]).to_csv(
       os.path.join(out_dir, "top_markers.csv"), index=False)
-    plan[g] = {"channels": channels, "tops": tops, "diff": diff, "counts": n, "out_dir": out_dir}
-    log(f"{g}: {len(order)} clusters, {len(channels)} channels: {', '.join(channels)}")
+    plan[g] = {"channels": channels, "required": required, "tops": tops, "diff": diff, "counts": n, "out_dir": out_dir}
+    log(f"{g}: {len(order)} clusters, {len(channels)} channels ({len(required)} always shown): {', '.join(channels)}")
     m = members[g]
     for k in order:
       ids = m.loc[m["cluster"] == k, ["cell_id", "code"]]
@@ -294,16 +317,21 @@ def main():
     rows = defaultdict(list)
     size = None
     for r in t.itertuples():
-      rel = os.path.join("img", f"c{r.cluster}_{r.i:02d}.webp")
-      ok = r.cell_id in crops and crops[r.cell_id]["crops"]
-      if ok:
+      src = None
+      if r.cell_id in crops and crops[r.cell_id]["crops"]:
         cr = crops[r.cell_id]
-        render(cr["crops"], cr["outlines"], pl["channels"], ranges, args.scale, args.quality, os.path.join(pl["out_dir"], rel))
+        jpg = render(cr["crops"], cr["outlines"], pl["channels"], ranges, args.scale, args.quality)
+        if args.no_embed:
+          src = os.path.join("img", f"c{r.cluster}_{r.i:02d}.jpg")
+          with open(os.path.join(pl["out_dir"], src), "wb") as fh:
+            fh.write(jpg)
+        else:
+          src = "data:image/jpeg;base64," + base64.b64encode(jpg).decode("ascii")
         size = size or next(iter(cr["crops"].values())).shape[0] * args.scale
       m = meta.loc[r.cell_id]
       rows[r.cluster].append({"cell_id": r.cell_id, "code": r.code, "cell_type": m["cell_type"],
-                              "flag_status": m["flag_status"], "area_um2": float(m["area_um2"]), "img": rel if ok else None})
-    write_html(os.path.join(pl["out_dir"], "index.html"), g, args.resolution, pl["channels"], pl["tops"],
+                              "flag_status": m["flag_status"], "area_um2": float(m["area_um2"]), "img": src})
+    write_html(os.path.join(pl["out_dir"], "index.html"), g, args.resolution, pl["channels"], pl["required"], pl["tops"],
                pl["diff"], rows, pl["counts"], size or 256)
     log(f"{g}: wrote {os.path.join(pl['out_dir'], 'index.html')}")
 
