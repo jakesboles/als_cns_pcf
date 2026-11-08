@@ -40,7 +40,7 @@ n_cores <- as.integer(Sys.getenv("SLURM_CPUS_PER_TASK", "1"))
 pca_features <- c("TMEM119", "Olig-2", "CD3e", "CD4",
                   "NeuN", "GFAP", "Vimentin", "CD11c",
                   "Iba-1", "CD163", "CD8")
-num_pcs <- 10
+num_pcs <- length(pca_features)
 leiden_res <- c(0.1, 0.3, 0.5, 1)
 snn_k <- 15
 
@@ -62,7 +62,7 @@ if (length(uncovered)) warning("cell types in no group (not embedded): ", paste(
 
 sce <- sce[, sce$cell_type %in% cell_groups[[cell_group]]]
 gc()
-assays(sce) <- assays(sce)["asinh"]
+assays(sce) <- assays(sce)["z"]
 sce$cell_type <- factor(sce$cell_type)
 sce$code <- factor(sce$code)
 sce$flag_status <- factor(case_when(is.na(sce$keep) ~ "NA",
@@ -108,8 +108,8 @@ umap_plots <- function(dimred, prefix) {
 # Dimensional reduction ---------------------------------------------------
 
 sce <- scater::runPCA(sce,
-                      scale = T,
-                      exprs_values = "asinh",
+                      scale = F,
+                      exprs_values = "z",
                       subset_row = pca_features,
                       ncomponents = length(pca_features))
 stopifnot(num_pcs <= ncol(reducedDim(sce, "PCA")))
@@ -241,9 +241,9 @@ for (col in cluster_cols) {
     frac_heatmap(ct, paste0(col, "_", v, "_fraction.png"), paste("Fraction of each cluster by", v))
   }
 
-  means <- sapply(split(seq_len(ncol(sce)), cl), function(i) rowMeans(assay(sce, "asinh")[, i, drop = F]))
+  means <- sapply(split(seq_len(ncol(sce)), cl), function(i) rowMeans(assay(sce, "z")[, i, drop = F]))
   png(paste0(results_dir, col, "_marker_means.png"), units = "in", res = 300,
       height = 12, width = max(5, nlevels(cl) * 0.25 + 3), bg = "white")
-  pheatmap(means, scale = "row", fontsize_row = 7, main = "Mean asinh per cluster (row z-score)")
+  pheatmap(means, scale = "row", fontsize_row = 7, main = "Mean z per cluster (row-scaled)")
   dev.off()
 }
