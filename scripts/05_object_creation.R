@@ -304,6 +304,15 @@ write.csv(marker_table, paste0(results_dir, "marker_cofactors_thresholds.csv"), 
 
 assay(spe, "asinh") <- asinh(assay(spe, "counts") / cofactor)
 
+# Z normalization (Hickey 2021; SPACEc 2025): per marker over all cells and sections, raw intensities, no cap
+z_mean <- rowMeans(assay(spe, "counts"), na.rm = T)
+z_sd <- matrixStats::rowSds(assay(spe, "counts"), na.rm = T)
+names(z_sd) <- rownames(spe)
+stopifnot(identical(names(z_mean), rownames(spe)), all(z_sd > 0))
+assay(spe, "z") <- (assay(spe, "counts") - z_mean) / z_sd
+write.csv(tibble(marker = rownames(spe), z_mean = z_mean, z_sd = z_sd),
+          paste0(results_dir, "marker_z_params.csv"), row.names = F)
+
 # Flags -------------------------------------------------------------------
 
 limits <- size_limits[match(spe$cell_type, size_limits$cell_type), ]

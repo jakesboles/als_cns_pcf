@@ -45,6 +45,7 @@ Phase 1 (current): import HALO object data, annotate objects with spatial contex
   - `getExplanatoryPCs` runs on a random 200k-cell subsample (`set.seed(1)`): R² per PC × variable is essentially unchanged and it's much faster than fitting on millions of cells.
   - Plots are assigned to `p` and saved with `ggsave(plot = p)` instead of `last_plot()`: under `Rscript`, auto-printed ggplots also render into `Rplots.pdf` as vector graphics, very slow with millions of points.
   - User's later edits (after PR 19): Harmony on `code` is now run, with `HARMONY_UMAP` from `HARMONY[, 1:num_pcs]` and explanatory-PC / UMAP plots for it. The PCA/UMAP save (`reduced_dims.rds`) is commented out only to speed up reruns; the file from an earlier run still exists and holds the PCA with its loadings. Harmony is saved to `data/07_embedding/reduced_dims_harmony.rds` (`list(HARMONY, HARMONY_UMAP)`). Re-attach after the same `keep` subset: `reducedDim(sce, "HARMONY") <- readRDS(...)$HARMONY`.
+  - **Z normalization (PR 28)**: PCA now runs on 05's `z` assay with `scale = F` and all PCs (`num_pcs <- length(pca_features)`); see *Z normalization* under Preprocessing.
   - **Lineage-panel PCA (PR 21, 2026-11-06)**: 08's loadings showed the top PCs of the all-channel PCA were driven by markers that don't separate cell types. User chose `pca_features` (TMEM119, MAP-2, LYVE1, S100B, Olig-2, CD3e, CD4, NeuN, GFAP, Vimentin, AQP4, CD11c, Iba-1, CD163, CD8); `runPCA(subset_row = pca_features, ncomponents = length(pca_features))` now uses only those (still `scale = T` on asinh). The script stops listing any name not in `rownames(sce)` (`MAP-2` spelling unverified; `antibody_targets` says `MAP2`, but channel names come from the qptiff). With 15 features at most 15 PCs exist, so `num_pcs = 12` keeps nearly all of them; revisit from `pca_elbow.png`. The PCA/UMAP save is uncommented again (user), so 08 reads the new loadings; 08's marker check now only requires the PCA's markers to be a subset of the SPE's.
   - **Per-cell-type embedding (PR 23, 2026-11-06)**: the user found the all-cell Leiden 0.3 clusters unevenly spread across sections and, after checking masks in QuPath, judged 05's filters not effective enough. 07 is now a **SLURM array, one task per cell group**, each running the same workflow (lineage-panel PCA → loadings/elbow/explanatory PCs → UMAP → Harmony on `code` → explanatory PCs → Harmony UMAP), plus **Leiden clustering** (moved in from 08), to pull bad masks into their own clusters. User decisions:
     - **All cells, 05's flags ignored** (`keep` no longer subsets). Flags travel along as `flag_status` (`kept`, or `flag_reason` such as `size;lineage`, `NA`) and are coloured on both UMAPs and tabulated per cluster, so flagged cells can be checked for forming their own clusters. `keep`/`flag_*` are also explanatory-PC variables (as factors) when not constant in the group.
@@ -191,6 +192,29 @@ Run **interactively** on the analytic node (user, 2026-11-04), top to bottom; ke
 - PCA on `asinh` with `scale = T` (per-marker z-scoring, cf. Hickey 2021), Harmony on `code` for the embedding only.
 - presto `logFC` on the `asinh` assay is a difference of mean asinh values (≈ log-ratio for values well above the cofactor).
 
+### Z normalization (PR 28, user, 2026-11-08)
+- **Why**: user wasn't satisfied with asinh. 08's per-cluster enriched markers (asinh mean differences) didn't match what the HTML montages showed. Likely cause: asinh differences depend on each marker's cofactor and compress bright signal, while the montage panels are linear.
+- **Basis (both papers read via PubMed)**:
+  - Hickey 2021 (doi:10.3389/fimmu.2021.727626) benchmarked raw, Z, log(double Z), min–max (1st/99th percentile caps) and arcsinh (cofactor 150) with Leiden, k-means and X-shift. Z was "the most consistent technique for handling different sources of noise including low intensity signal, high background signal, segmentation noise, and imaging artifacts". Definition: "Each marker intensity was Z normalized separately for all cells within the dataset." Applied to raw intensities, with no transform and no clipping. Single donor, four colon regions on one array.
+  - SPACEc 2025 (Nat Commun, doi:10.1038/s41467-025-65658-3, PMC12660697): "Conventionally, Z-normalization is the most robust for CODEX data … for other platforms such as MIBI, CyTOF, and IMC, arcsinh normalization is more commonly used." Same definition as Hickey. Note, though, that for their tonsil data they z-scored **per image per marker**, then Leiden (resolution 0.4, 10 neighbours), with no batch correction. They also remove very small cells and low-DNA cells **before** z-scoring.
+  - Both cluster with Leiden through scanpy defaults on the marker matrix itself. With fewer than 50 markers, scanpy builds its neighbour graph on the markers directly, without PCA.
+- **User decisions**: no intensity cap; mean and SD from **all cells** in the object (flagged included); **dataset-wide** across all sections (not per image as SPACEc did, because one section = one donor = one group, so per-section z would remove donor/disease differences); keep `asinh` for now; keep Harmony.
+- **05**: after the asinh assay, adds assay `z` = (counts − marker mean) / marker SD, over all cells and sections, no cap. Writes `results/05_object_creation/marker_z_params.csv` (`marker, z_mean, z_sd`). The object now holds three dense marker × cell matrices (counts, asinh, z): about 1.5× the previous RDS size and memory.
+- **07 (closest to the papers while keeping Harmony)**:
+  - PCA input is `z` with `scale = F`, `ncomponents = length(pca_features)`, and **`num_pcs <- length(pca_features)`** (all PCs).
+  - A full-rank PCA is only a rotation (plus within-group re-centring), so Euclidean distances between cells, and therefore the UMAP, SNN graph and Leiden, are identical to working on the z matrix directly, as the papers did. The PCA step exists only so Harmony has an embedding to correct.
+  - `scale = F` keeps dataset-wide SD units inside each cell group; `scale = T` would re-standardise per group (equivalent to raw intensities per group).
+  - Keeps only the `z` assay per task; the marker-means heatmap is mean z (row-scaled).
+  - Marker panel unchanged: the user's `pca_features` (11 markers at PR 28: TMEM119, Olig-2, CD3e, CD4, NeuN, GFAP, Vimentin, CD11c, Iba-1, CD163, CD8; the papers used their full curated panels). Previously the user's `num_pcs` was 10.
+- **08**:
+  - Enrichment = cluster mean z minus mean z of the rest of the group (SD units), computed from 01 raw means and `marker_z_params.csv` (`--z_params`; exits if missing, i.e. 05 not rerun).
+  - `top_markers.csv` column renamed `mean_z_diff`; HTML text says "mean z difference, SD units".
+  - The always-shown marker check now validates against the z parameters' markers. Display ranges are unchanged (linear raw percentiles).
+  - Synthetic test: enrichment matched brute-force z (0 mismatches).
+- **Rerun order**: 05 (to the end) → 07 (all tasks) → 08.
+- Caveat: a linear per-marker rescale identical for every section doesn't fix section-level shifts (e.g. `166-1`); Harmony handles those for the embedding only.
+- 05's cofactors, thresholds and `flag_lineage` still use raw/asinh as before; flags are unchanged by this PR.
+
 ### Rationale
 - **Why asinh**: intensity distributions are heavily right-skewed. asinh(x/c) is ~linear for x ≪ c and ~log(2x/c) for x ≫ c, so it compresses the bright tail like a log while staying defined and stable at 0/near-background values. Standard in cytometry (Bendall 2011; Nowicka 2017 CyTOF workflow, cofactor 5) and multiplexed imaging (Windhager 2023 IMC protocol, cofactor 1 for IMC counts).
 - **Cofactor is scale-dependent and must be tuned**: c should sit near the background/noise level of each channel so noise is compressed and positive signal is log-scaled. Cytometry's 5 (CyTOF counts) / ~150 (flow) don't transfer to HALO intensities directly. Plan: inspect per-marker raw distributions (e.g. `apply(counts, 1, quantile, c(.5, .9, .99))` or density plots on log scale) and pick a global or per-marker cofactor. Per-marker works as-is: a vector ordered by `rownames(sce)` divides row-wise under R's column-major recycling.
@@ -248,6 +272,7 @@ Run **interactively** on the analytic node (user, 2026-11-04), top to bottom; ke
 - Van Gassen S et al. 2020 Cytometry A, CytoNorm (shared-control normalization). doi:10.1002/cyto.a.23904
 - Graf J et al. 2022 Bioinformatics, FLINO (on-slide controls for MxIF normalization). doi:10.1093/bioinformatics/btab686
 - Korsunsky I et al. 2019 Nat Methods, Harmony. doi:10.1038/s41592-019-0619-0
+- Tan Y et al. 2025 Nat Commun 16:10652, SPACEc (Python multiplexed-imaging workflow; Z normalization most robust for CODEX). doi:10.1038/s41467-025-65658-3
 
 ## Proposed toolchain (pending user agreement)
 

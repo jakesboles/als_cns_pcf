@@ -69,17 +69,18 @@ def renamed_columns(path, markers):
   return cols
 
 
-def cluster_sums(code, args, cofactor, members):
+def cluster_sums(code, args, zpar, members):
   path = os.path.join(args.quant_dir, f"{code}.parquet")
-  cols = renamed_columns(path, cofactor)
+  cols = renamed_columns(path, zpar)
   d = pd.read_parquet(path, columns=["cell_id"] + list(cols)).rename(columns=cols)
   out = {}
   for group, m in members.items():
     sub = d.merge(m, on="cell_id", how="inner")
     if sub.empty:
       continue
-    markers = [c for c in cofactor if c in sub.columns]
-    a = np.arcsinh(sub[markers].to_numpy(np.float64) / np.array([cofactor[c] for c in markers]))
+    markers = [c for c in zpar if c in sub.columns]
+    mu, sd = np.array([zpar[c] for c in markers]).T
+    a = (sub[markers].to_numpy(np.float64) - mu) / sd
     s = pd.DataFrame(a, columns=markers).groupby(sub["cluster"].to_numpy()).sum()
     n = sub.groupby("cluster").size()
     out[group] = (s, n)
@@ -189,7 +190,7 @@ h2{{margin:18px 0 4px}}
     hi = set(tops[k])
     hc = "".join(f'<div class="h{" hi" if c in hi else " req" if c in required else ""}">{html.escape(c)}</div>' for c in channels)
     top_txt = ", ".join(f"{html.escape(m)} (+{diff.loc[k, m]:.2f})" for m in tops[k])
-    parts.append(f'<h2 id="c{k}">Cluster {k}</h2><div>{counts[k]} cells; top markers vs rest of group (mean asinh difference): {top_txt}</div>'
+    parts.append(f'<h2 id="c{k}">Cluster {k}</h2><div>{counts[k]} cells; top markers vs rest of group (mean z difference, SD units): {top_txt}</div>'
                  f'<div class="head">{hc}</div>')
     for r in rows.get(k, []):
       lab = (f'{html.escape(r["cell_id"])}<br>{html.escape(r["code"])} · {html.escape(r["cell_type"])}'
@@ -215,7 +216,7 @@ def main():
   p.add_argument("--seed", type=int, default=1)
   p.add_argument("--clusters_dir", default="data/07_cell_clustering")
   p.add_argument("--flags", default="data/05_object_creation/cell_flags.parquet")
-  p.add_argument("--cofactors", default="results/05_object_creation/marker_cofactors_thresholds.csv")
+  p.add_argument("--z_params", default="results/05_object_creation/marker_z_params.csv")
   p.add_argument("--quant_dir", default="data/01_quantify_cells/")
   p.add_argument("--channels_dir", default="results/01_quantify_cells/")
   p.add_argument("--image_dir", default="pcf_images")
@@ -228,12 +229,14 @@ def main():
                                  for f in glob.glob(os.path.join(args.clusters_dir, "*", "clusters.parquet")))
   if not groups:
     sys.exit(f"No clusters.parquet under {args.clusters_dir}/<group>/; run 07")
-  cof = pd.read_csv(args.cofactors)
-  cofactor = dict(zip(cof["marker"], cof["cofactor"]))
+  if not os.path.exists(args.z_params):
+    sys.exit(f"{args.z_params} not found; rerun 05 (it writes the Z normalization parameters)")
+  zp = pd.read_csv(args.z_params)
+  zpar = {m: (mu, sd) for m, mu, sd in zip(zp["marker"], zp["z_mean"], zp["z_sd"])}
   flags = pd.read_parquet(args.flags, columns=["code", "cell_id", "cell_type", "area_um2", "keep", "flag_reason"])
   flags["flag_status"] = np.where(flags["keep"].isna(), "NA",
                                   np.where(flags["keep"].fillna(False).astype(bool), "kept", flags["flag_reason"].astype(str)))
-  bad = {g: [c for c in REQUIRED.get(g, []) if c not in cofactor] for g in groups}
+  bad = {g: [c for c in REQUIRED.get(g, []) if c not in zpar] for g in groups}
   bad = {g: v for g, v in bad.items() if v}
   if bad:
     sys.exit("REQUIRED markers not among 05's channels: " + "; ".join(f"{g}: {', '.join(v)}" for g, v in bad.items()))
@@ -260,7 +263,7 @@ def main():
   log(f"{len(groups)} groups, {len(units)} group x resolution pages, {len(codes)} sections")
 
   pool_n = max(1, min(args.workers, len(codes)))
-  jobs = [(c, args, cofactor, {u: m.loc[m["code"] == c, ["cell_id", "cluster"]] for u, m in members.items()}) for c in codes]
+  jobs = [(c, args, zpar, {u: m.loc[m["code"] == c, ["cell_id", "cluster"]] for u, m in members.items()}) for c in codes]
   sums, counts = defaultdict(list), defaultdict(list)
   with mp.get_context("fork").Pool(pool_n) as pool:
     for code, res in pool.starmap(cluster_sums, jobs):
@@ -283,7 +286,7 @@ def main():
     os.makedirs(os.path.join(out_dir, "img") if args.no_embed else out_dir, exist_ok=True)
     diff.to_csv(os.path.join(out_dir, "marker_enrichment.csv"))
     pd.DataFrame([(k, i + 1, mk, diff.loc[k, mk]) for k in tops for i, mk in enumerate(tops[k])],
-                 columns=["cluster", "rank", "marker", "mean_asinh_diff"]).to_csv(
+                 columns=["cluster", "rank", "marker", "mean_z_diff"]).to_csv(
       os.path.join(out_dir, "top_markers.csv"), index=False)
     plan[u] = {"channels": channels, "required": required, "tops": tops, "diff": diff, "counts": n, "out_dir": out_dir}
     log(f"{g} leiden_{r}: {len(order)} clusters, {len(channels)} channels ({len(required)} always shown)")
