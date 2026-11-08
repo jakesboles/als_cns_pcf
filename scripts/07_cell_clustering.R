@@ -40,7 +40,7 @@ n_cores <- as.integer(Sys.getenv("SLURM_CPUS_PER_TASK", "1"))
 pca_features <- c("TMEM119", "Olig-2", "CD3e", "CD4",
                   "NeuN", "GFAP", "Vimentin", "CD11c",
                   "Iba-1", "CD163", "CD8")
-num_pcs <- length(pca_features)
+num_pcs <- length(pca_features) - 1
 leiden_res <- c(0.1, 0.3, 0.5, 1)
 snn_k <- 15
 
