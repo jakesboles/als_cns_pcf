@@ -62,7 +62,7 @@ if (length(uncovered)) warning("cell types in no group (not embedded): ", paste(
 
 sce <- sce[, sce$cell_type %in% cell_groups[[cell_group]]]
 gc()
-assays(sce) <- assays(sce)["z"]
+assays(sce) <- assays(sce)[c("z", "asinh")]
 sce$cell_type <- factor(sce$cell_type)
 sce$code <- factor(sce$code)
 sce$flag_status <- factor(case_when(is.na(sce$keep) ~ "NA",
@@ -241,9 +241,23 @@ for (col in cluster_cols) {
     frac_heatmap(ct, paste0(col, "_", v, "_fraction.png"), paste("Fraction of each cluster by", v))
   }
 
-  means <- sapply(split(seq_len(ncol(sce)), cl), function(i) rowMeans(assay(sce, "z")[, i, drop = F]))
-  png(paste0(results_dir, col, "_marker_means.png"), units = "in", res = 300,
-      height = 12, width = max(5, nlevels(cl) * 0.25 + 3), bg = "white")
-  pheatmap(means, scale = "row", fontsize_row = 7, main = "Mean z per cluster (row-scaled)")
+  if (nlevels(cl) < 2) next
+  wx <- presto::wilcoxauc(assay(sce, "asinh"), as.character(cl))
+  wx$log2FC <- wx$logFC / log(2)
+  write.csv(wx, paste0(results_dir, col, "_markers.csv"), row.names = F)
+  auc_m <- with(wx, tapply(auc, list(feature, group), identity))[, levels(cl), drop = F]
+  lfc_m <- with(wx, tapply(log2FC, list(feature, group), identity))[rownames(auc_m), levels(cl), drop = F]
+  ord <- hclust(dist(auc_m))$order
+  lim <- max(quantile(abs(lfc_m), 0.99, na.rm = T), 0.1)
+  pal <- colorRampPalette(c("dodgerblue", "white", "firebrick"))(101)
+  h_auc <- pheatmap(auc_m[ord, ], cluster_rows = F, cluster_cols = F, color = pal,
+                    breaks = seq(0, 1, length.out = 102), fontsize_row = 7,
+                    main = "AUROC, cluster vs rest of group", silent = T)
+  h_lfc <- pheatmap(pmax(pmin(lfc_m[ord, ], lim), -lim), cluster_rows = F, cluster_cols = F, color = pal,
+                    breaks = seq(-lim, lim, length.out = 102), fontsize_row = 7,
+                    main = sprintf("log2FC vs rest (mean asinh diff / ln 2; capped at %.2f)", lim), silent = T)
+  png(paste0(results_dir, col, "_markers_auc_log2fc.png"), units = "in", res = 300,
+      height = 12, width = 2 * max(5, nlevels(cl) * 0.3 + 3), bg = "white")
+  gridExtra::grid.arrange(h_auc$gtable, h_lfc$gtable, ncol = 2)
   dev.off()
 }
