@@ -1,7 +1,9 @@
 import os
 import sys
 import glob
+import io
 import html
+import base64
 import argparse
 import multiprocessing as mp
 from collections import defaultdict
@@ -139,7 +141,7 @@ def crop_code(code, args, targets, needed, cell_files):
   return code, out
 
 
-def render(crops, outlines, channels, ranges, scale, quality, path):
+def render(crops, outlines, channels, ranges, scale, quality):
   size = next(iter(crops.values())).shape[0] * scale if crops else 1
   strip = Image.new("RGB", (len(channels) * (size + GAP) - GAP, size), (0, 0, 0))
   for k, c in enumerate(channels):
@@ -153,7 +155,9 @@ def render(crops, outlines, channels, ranges, scale, quality, path):
       pts = [tuple(p) for p in (ring * scale)]
       d.line(pts, fill=TARGET if is_target else TYPE_COLORS.get(ct, OTHER), width=3 if is_target else 1)
     strip.paste(panel, (k * (size + GAP), 0))
-  strip.save(path, quality=quality)
+  buf = io.BytesIO()
+  strip.save(buf, format="JPEG", quality=quality)
+  return buf.getvalue()
 
 
 def write_html(path, group, res, channels, required, tops, diff, rows, counts, size):
@@ -206,6 +210,7 @@ def main():
   p.add_argument("--scale", type=int, default=2)
   p.add_argument("--clip", type=float, nargs=2, default=[1, 99.5])
   p.add_argument("--quality", type=int, default=90)
+  p.add_argument("--no_embed", action="store_true")
   p.add_argument("--seed", type=int, default=1)
   p.add_argument("--clusters_dir", default="data/07_cell_clustering")
   p.add_argument("--flags", default="data/05_object_creation/cell_flags.parquet")
@@ -271,7 +276,7 @@ def main():
     required = REQUIRED.get(g, [])
     channels = required + [c for c in enriched if c not in required]
     out_dir = os.path.join(args.results_dir, g, col)
-    os.makedirs(os.path.join(out_dir, "img"), exist_ok=True)
+    os.makedirs(os.path.join(out_dir, "img") if args.no_embed else out_dir, exist_ok=True)
     diff.to_csv(os.path.join(out_dir, "marker_enrichment.csv"))
     pd.DataFrame([(k, r + 1, m, diff.loc[k, m]) for k in tops for r, m in enumerate(tops[k])],
                  columns=["cluster", "rank", "marker", "mean_asinh_diff"]).to_csv(
@@ -312,15 +317,20 @@ def main():
     rows = defaultdict(list)
     size = None
     for r in t.itertuples():
-      rel = os.path.join("img", f"c{r.cluster}_{r.i:02d}.webp")
-      ok = r.cell_id in crops and crops[r.cell_id]["crops"]
-      if ok:
+      src = None
+      if r.cell_id in crops and crops[r.cell_id]["crops"]:
         cr = crops[r.cell_id]
-        render(cr["crops"], cr["outlines"], pl["channels"], ranges, args.scale, args.quality, os.path.join(pl["out_dir"], rel))
+        jpg = render(cr["crops"], cr["outlines"], pl["channels"], ranges, args.scale, args.quality)
+        if args.no_embed:
+          src = os.path.join("img", f"c{r.cluster}_{r.i:02d}.jpg")
+          with open(os.path.join(pl["out_dir"], src), "wb") as fh:
+            fh.write(jpg)
+        else:
+          src = "data:image/jpeg;base64," + base64.b64encode(jpg).decode("ascii")
         size = size or next(iter(cr["crops"].values())).shape[0] * args.scale
       m = meta.loc[r.cell_id]
       rows[r.cluster].append({"cell_id": r.cell_id, "code": r.code, "cell_type": m["cell_type"],
-                              "flag_status": m["flag_status"], "area_um2": float(m["area_um2"]), "img": rel if ok else None})
+                              "flag_status": m["flag_status"], "area_um2": float(m["area_um2"]), "img": src})
     write_html(os.path.join(pl["out_dir"], "index.html"), g, args.resolution, pl["channels"], pl["required"], pl["tops"],
                pl["diff"], rows, pl["counts"], size or 256)
     log(f"{g}: wrote {os.path.join(pl['out_dir'], 'index.html')}")
