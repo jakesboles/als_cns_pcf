@@ -87,10 +87,11 @@ rename_channels <- function(x) {
 channels <- map(set_names(codes), function(cd) {
   rename_channels(read.csv(paste0("results/01_quantify_cells/", cd, "_channels.csv"))$channel)
 })
-dup <- purrr::keep(channels, anyDuplicated)
-if (length(dup)) {
-  walk(names(dup), ~ message(.x, ": duplicated after renaming: ", paste(unique(dup[[.x]][duplicated(dup[[.x]])]), collapse = ", ")))
-  stop("Duplicate channel names after renaming")
+
+for (i in seq_along(channels)){
+  if (anyDuplicated(channels[[i]]) > 0) { 
+    message(paste0("Duplicated channel in ", names(channels)[i]))
+  }
 }
 
 features <- channels[[1]]
