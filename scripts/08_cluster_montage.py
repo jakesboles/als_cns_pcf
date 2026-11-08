@@ -160,10 +160,11 @@ def render(crops, outlines, channels, ranges, scale, quality):
   return buf.getvalue()
 
 
-def write_html(path, group, res, channels, required, tops, diff, rows, counts, size):
+def write_html(path, group, res, all_res, channels, required, tops, diff, rows, counts, size):
   ratio = GAP / size
   legend = "".join(f'<span class="sw" style="border-color:rgb{c}"></span>{html.escape(t)} ' for t, c in TYPE_COLORS.items())
   nav = " ".join(f'<a href="#c{k}">{k}</a>' for k in tops)
+  res_nav = " ".join(f"<b>{r}</b>" if r == res else f'<a href="../leiden_{r}/index.html">{r}</a>' for r in all_res)
   parts = [f"""<!doctype html><html><head><meta charset="utf-8"><title>{html.escape(group)} leiden {res}</title>
 <style>
 :root{{--h:160px}}
@@ -171,18 +172,18 @@ body{{font-family:sans-serif;margin:12px;background:#111;color:#ddd}}
 a{{color:#8cf}}
 .sw{{display:inline-block;width:14px;height:10px;border:3px solid;margin:0 3px 0 8px;vertical-align:middle}}
 .top{{position:sticky;top:0;background:#111;padding:6px 0;z-index:2}}
-.head{{display:flex;margin-left:260px}}
-.h{{width:var(--h);margin-right:calc(var(--h)*{ratio:.5f});font-size:11px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}}
+.head{{display:flex;width:max-content;margin-left:260px}}
+.h{{flex:none;box-sizing:border-box;width:var(--h);margin-right:calc(var(--h)*{ratio:.5f});font-size:11px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}}
 .h.req{{color:#8cf}}
 .h.hi{{color:#ff0;font-weight:bold}}
-.row{{display:flex;align-items:center;margin:2px 0}}
-.lab{{width:256px;flex:none;font-size:11px;padding-right:4px;word-break:break-all}}
-.row img{{height:var(--h);image-rendering:auto}}
+.row{{display:flex;width:max-content;align-items:center;margin:2px 0}}
+.lab{{box-sizing:border-box;width:260px;flex:none;font-size:11px;padding-right:4px;word-break:break-all}}
+.row img{{flex:none;height:var(--h);image-rendering:auto}}
 h2{{margin:18px 0 4px}}
 </style></head><body>
 <div class="top"><b>{html.escape(group)}</b>, Leiden {res} &nbsp; panel size <input type="range" min="60" max="400" value="160" oninput="document.documentElement.style.setProperty('--h',this.value+'px')">
 &nbsp; headers: <span style="color:#8cf">always shown</span>, <span style="color:#ff0;font-weight:bold">cluster's top markers</span>
-&nbsp; outlines: <span class="sw" style="border-color:rgb{TARGET}"></span>sampled cell {legend}<br>clusters: {nav}</div>
+&nbsp; outlines: <span class="sw" style="border-color:rgb{TARGET}"></span>sampled cell {legend}<br>resolution: {res_nav} &nbsp; clusters: {nav}</div>
 """]
   for k in tops:
     hi = set(tops[k])
@@ -203,7 +204,7 @@ h2{{margin:18px 0 4px}}
 def main():
   p = argparse.ArgumentParser()
   p.add_argument("--groups", nargs="*")
-  p.add_argument("--resolution", default="0.3")
+  p.add_argument("--resolutions", nargs="*")
   p.add_argument("--n_cells", type=int, default=20)
   p.add_argument("--top", type=int, default=4)
   p.add_argument("--window_um", type=float, default=64)
@@ -223,7 +224,6 @@ def main():
   p.add_argument("--workers", type=int, default=int(os.environ.get("SLURM_CPUS_PER_TASK", 1)))
   args = p.parse_args()
 
-  col = f"leiden_{args.resolution}"
   groups = args.groups or sorted(os.path.basename(os.path.dirname(f))
                                  for f in glob.glob(os.path.join(args.clusters_dir, "*", "clusters.parquet")))
   if not groups:
@@ -233,62 +233,67 @@ def main():
   flags = pd.read_parquet(args.flags, columns=["code", "cell_id", "cell_type", "area_um2", "keep", "flag_reason"])
   flags["flag_status"] = np.where(flags["keep"].isna(), "NA",
                                   np.where(flags["keep"].fillna(False).astype(bool), "kept", flags["flag_reason"].astype(str)))
-
-  members = {}
-  for g in groups:
-    f = os.path.join(args.clusters_dir, g, "clusters.parquet")
-    if not os.path.exists(f):
-      sys.exit(f"{f} not found")
-    cl = pd.read_parquet(f)
-    if col not in cl.columns:
-      sys.exit(f"{col} not in {f}; available: {', '.join(c for c in cl.columns if c.startswith('leiden_'))}")
-    cl = cl[["cell_id", col]].rename(columns={col: "cluster"})
-    cl["cluster"] = cl["cluster"].astype(str)
-    cl = cl.merge(flags[["cell_id", "code"]], on="cell_id", how="left")
-    if cl["code"].isna().any():
-      sys.exit(f"{int(cl['code'].isna().sum())} {g} cells not in {args.flags}; rerun 05/07 consistently")
-    members[g] = cl
   bad = {g: [c for c in REQUIRED.get(g, []) if c not in cofactor] for g in groups}
   bad = {g: v for g, v in bad.items() if v}
   if bad:
     sys.exit("REQUIRED markers not among 05's channels: " + "; ".join(f"{g}: {', '.join(v)}" for g, v in bad.items()))
+
+  members = {}
+  res_of = {}
+  for g in groups:
+    f = os.path.join(args.clusters_dir, g, "clusters.parquet")
+    if not os.path.exists(f):
+      sys.exit(f"{f} not found")
+    cl = pd.read_parquet(f).merge(flags[["cell_id", "code"]], on="cell_id", how="left")
+    if cl["code"].isna().any():
+      sys.exit(f"{int(cl['code'].isna().sum())} {g} cells not in {args.flags}; rerun 05/07 consistently")
+    available = [c.removeprefix("leiden_") for c in cl.columns if c.startswith("leiden_")]
+    wanted = args.resolutions or sorted(available, key=float)
+    missing = [r for r in wanted if r not in available]
+    if missing:
+      sys.exit(f"{g}: resolutions {', '.join(missing)} not in {f}; available: {', '.join(available)}")
+    res_of[g] = wanted
+    for r in wanted:
+      members[(g, r)] = cl[["cell_id", "code"]].assign(cluster=cl[f"leiden_{r}"].astype(str))
+  units = list(members)
   codes = sorted(set().union(*(set(m["code"]) for m in members.values())))
-  log(f"{len(groups)} groups ({', '.join(groups)}), {col}, {len(codes)} sections")
+  log(f"{len(groups)} groups, {len(units)} group x resolution pages, {len(codes)} sections")
 
   pool_n = max(1, min(args.workers, len(codes)))
-  jobs = [(c, args, cofactor, {g: m.loc[m["code"] == c, ["cell_id", "cluster"]] for g, m in members.items()}) for c in codes]
+  jobs = [(c, args, cofactor, {u: m.loc[m["code"] == c, ["cell_id", "cluster"]] for u, m in members.items()}) for c in codes]
   sums, counts = defaultdict(list), defaultdict(list)
   with mp.get_context("fork").Pool(pool_n) as pool:
     for code, res in pool.starmap(cluster_sums, jobs):
-      for g, (s, n) in res.items():
-        sums[g].append(s)
-        counts[g].append(n)
+      for u, (s, n) in res.items():
+        sums[u].append(s)
+        counts[u].append(n)
 
-  rng = np.random.default_rng(args.seed)
   plan = {}
   targets = []
-  for g in groups:
-    s = pd.concat(sums[g]).groupby(level=0).sum()
-    n = pd.concat(counts[g]).groupby(level=0).sum()
+  for u in units:
+    g, r = u
+    s = pd.concat(sums[u]).groupby(level=0).sum()
+    n = pd.concat(counts[u]).groupby(level=0).sum()
     order = sorted(n.index, key=lambda x: (len(x), x))
     s, n = s.loc[order], n.loc[order]
     diff, tops, enriched = enrichment(s, n, args.top)
     required = REQUIRED.get(g, [])
     channels = required + [c for c in enriched if c not in required]
-    out_dir = os.path.join(args.results_dir, g, col)
+    out_dir = os.path.join(args.results_dir, g, f"leiden_{r}")
     os.makedirs(os.path.join(out_dir, "img") if args.no_embed else out_dir, exist_ok=True)
     diff.to_csv(os.path.join(out_dir, "marker_enrichment.csv"))
-    pd.DataFrame([(k, r + 1, m, diff.loc[k, m]) for k in tops for r, m in enumerate(tops[k])],
+    pd.DataFrame([(k, i + 1, mk, diff.loc[k, mk]) for k in tops for i, mk in enumerate(tops[k])],
                  columns=["cluster", "rank", "marker", "mean_asinh_diff"]).to_csv(
       os.path.join(out_dir, "top_markers.csv"), index=False)
-    plan[g] = {"channels": channels, "required": required, "tops": tops, "diff": diff, "counts": n, "out_dir": out_dir}
-    log(f"{g}: {len(order)} clusters, {len(channels)} channels ({len(required)} always shown): {', '.join(channels)}")
-    m = members[g]
+    plan[u] = {"channels": channels, "required": required, "tops": tops, "diff": diff, "counts": n, "out_dir": out_dir}
+    log(f"{g} leiden_{r}: {len(order)} clusters, {len(channels)} channels ({len(required)} always shown)")
+    m = members[u]
+    rng = np.random.default_rng(args.seed)
     for k in order:
       ids = m.loc[m["cluster"] == k, ["cell_id", "code"]]
       pick = ids.iloc[np.sort(rng.choice(len(ids), size=min(args.n_cells, len(ids)), replace=False))]
-      for i, r in enumerate(pick.itertuples()):
-        targets.append({"group": g, "cluster": k, "i": i, "cell_id": r.cell_id, "code": r.code, "channels": channels})
+      for i, t in enumerate(pick.itertuples()):
+        targets.append({"unit": u, "cluster": k, "i": i, "cell_id": t.cell_id, "code": t.code, "channels": channels})
   targets = pd.DataFrame(targets)
 
   cell_files = defaultdict(dict)
@@ -297,17 +302,20 @@ def main():
       cell_files[code][cell_type] = paths
   jobs = []
   for code, t in targets.groupby("code"):
-    needed = set().union(*map(set, t["channels"]))
-    jobs.append((code, args, t, needed, dict(cell_files.get(code, {}))))
+    per_cell = t.groupby("cell_id")["channels"].agg(lambda x: sorted(set().union(*map(set, x)))).reset_index()
+    needed = set().union(*map(set, per_cell["channels"]))
+    jobs.append((code, args, per_cell, needed, dict(cell_files.get(code, {}))))
+  log(f"{len(targets)} sampled rows, {sum(len(j[2]) for j in jobs)} distinct cells to crop")
   crops = {}
   with mp.get_context("fork").Pool(max(1, min(args.workers, len(jobs)))) as pool:
     for code, res in pool.starmap(crop_code, jobs):
       crops.update(res)
 
   meta = flags.set_index("cell_id")
-  for g in groups:
-    pl = plan[g]
-    t = targets[targets["group"] == g]
+  for u in units:
+    g, res = u
+    pl = plan[u]
+    t = targets[targets["unit"] == u]
     ranges = {}
     for c in pl["channels"]:
       px = [crops[cid]["crops"][c].ravel() for cid in t["cell_id"] if cid in crops and c in crops[cid]["crops"]]
@@ -331,14 +339,16 @@ def main():
       m = meta.loc[r.cell_id]
       rows[r.cluster].append({"cell_id": r.cell_id, "code": r.code, "cell_type": m["cell_type"],
                               "flag_status": m["flag_status"], "area_um2": float(m["area_um2"]), "img": src})
-    write_html(os.path.join(pl["out_dir"], "index.html"), g, args.resolution, pl["channels"], pl["required"], pl["tops"],
+    write_html(os.path.join(pl["out_dir"], "index.html"), g, res, res_of[g], pl["channels"], pl["required"], pl["tops"],
                pl["diff"], rows, pl["counts"], size or 256)
-    log(f"{g}: wrote {os.path.join(pl['out_dir'], 'index.html')}")
+    log(f"{g} leiden_{res}: wrote {os.path.join(pl['out_dir'], 'index.html')}")
 
-  links = "".join(f'<li><a href="{html.escape(g)}/{col}/index.html">{html.escape(g)}</a></li>' for g in groups)
-  with open(os.path.join(args.results_dir, f"index_{col}.html"), "w") as fh:
-    fh.write(f'<!doctype html><html><head><meta charset="utf-8"><title>Cluster montages {col}</title></head>'
-             f'<body style="font-family:sans-serif"><h1>Cluster montages, {col}</h1><ul>{links}</ul></body></html>')
+  table = "".join(f"<tr><td>{html.escape(g)}</td>" + "".join(
+    f'<td><a href="{html.escape(g)}/leiden_{r}/index.html">{r}</a></td>' for r in res_of[g]) + "</tr>" for g in groups)
+  with open(os.path.join(args.results_dir, "index.html"), "w") as fh:
+    fh.write('<!doctype html><html><head><meta charset="utf-8"><title>Cluster montages</title></head>'
+             '<body style="font-family:sans-serif"><h1>Cluster montages</h1><p>Leiden resolution per cell group:</p>'
+             f'<table cellpadding="6">{table}</table></body></html>')
   log("Done")
 
 
