@@ -15,8 +15,8 @@ dir.create(results_dir, showWarnings = F, recursive = T)
 
 tissues_use <- "mcx"
 
-# staining runs (code prefix) excluded entirely, e.g. c("166")
-exclude_runs <- c("166")
+# sections excluded entirely (imaged on a different PCF instrument; channel mismatch)
+exclude_codes <- paste0("166-", 1:6)
 
 channel_rename <- c("Mac2/Galectin-3" = "Galectin-3")
 
@@ -77,9 +77,11 @@ key <- key %>%
 codes <- list.files("data/01_quantify_cells", pattern = "\\.parquet$") %>%
   str_remove("\\.parquet$")
 codes <- intersect(codes, key$code[key$tissue %in% tissues_use])
-excluded <- codes[str_split_i(codes, "-", i = 1) %in% exclude_runs]
+unknown_excl <- setdiff(exclude_codes, key$code)
+if (length(unknown_excl)) stop("exclude_codes not in sample_key.csv: ", paste(unknown_excl, collapse = ", "))
+excluded <- intersect(codes, exclude_codes)
 codes <- setdiff(codes, excluded)
-if (length(excluded)) message("Excluded (exclude_runs): ", paste(excluded, collapse = ", "))
+if (length(excluded)) message("Excluded (exclude_codes): ", paste(excluded, collapse = ", "))
 message(length(codes), " sections: ", paste(codes, collapse = ", "))
 
 # Channel names -----------------------------------------------------------
