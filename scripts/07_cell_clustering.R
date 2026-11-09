@@ -44,6 +44,10 @@ num_pcs <- length(pca_features) - 1
 leiden_res <- c(0.1, 0.3, 0.5, 1)
 z_cap <- 10
 snn_k <- 15
+# clustering input: "section_z" = SPACEc (raw, z per section over all cells in it, no cap);
+# "log_section_z_group" = PR 32 (log1p, z per section within this group, capped at z_cap)
+clust_norm <- "section_z"
+stopifnot(clust_norm %in% c("section_z", "log_section_z_group"))
 
 sce <- readRDS("data/05_object_creation/spe.rds")
 
@@ -54,6 +58,21 @@ if (cell_group == names(cell_groups)[1]) {
                                                                              "sample_id", "tissue", "sex", "age", "clinical_diagnosis",
                                                                              "c9orf72_mutation", "group", "batch")],
                        paste0("data/05_object_creation/filtered_cells.parquet"))
+}
+
+missing <- setdiff(pca_features, rownames(sce))
+if (length(missing)) stop("pca_features not in rownames(sce): ", paste(missing, collapse = ", "))
+
+if (clust_norm == "section_z") {
+  by_code <- split(seq_len(ncol(sce)), sce$code)
+  cnt <- assay(sce, "counts")[pca_features, , drop = F]
+  sec_mu <- sapply(by_code, function(i) rowMeans(cnt[, i, drop = F]))
+  sec_sd <- sapply(by_code, function(i) matrixStats::rowSds(cnt[, i, drop = F]))
+  sec_sd[is.na(sec_sd) | sec_sd == 0] <- 1
+  write.csv(rbind(cbind(stat = "mean", marker = pca_features, as.data.frame(sec_mu)),
+                  cbind(stat = "sd", marker = pca_features, as.data.frame(sec_sd))),
+            paste0(results_dir, "section_z_params.csv"), row.names = F)
+  rm(cnt, by_code)
 }
 
 missing_types <- setdiff(cell_groups[[cell_group]], unique(sce$cell_type))
@@ -67,27 +86,27 @@ assays(sce) <- assays(sce)[c("counts", "asinh")]
 sce$cell_type <- factor(sce$cell_type)
 sce$code <- factor(sce$code)
 
-# clustering input (AD CODEX-CNS style): log1p, then z per section within this group, capped at +-10
-clust <- log1p(pmax(assay(sce, "counts"), 0))
-for (cd in levels(sce$code)) {
-  i <- which(sce$code == cd)
-  mu <- rowMeans(clust[, i, drop = F])
-  sdv <- matrixStats::rowSds(clust[, i, drop = F])
-  sdv[is.na(sdv) | sdv == 0] <- 1
-  clust[, i] <- pmax(pmin((clust[, i, drop = F] - mu) / sdv, z_cap), -z_cap)
+clust <- assay(sce, "counts")[pca_features, , drop = F]
+if (clust_norm == "section_z") {
+  cd <- as.character(sce$code)
+  clust <- (clust - sec_mu[, cd, drop = F]) / sec_sd[, cd, drop = F]
+} else {
+  clust <- log1p(pmax(clust, 0))
+  for (cd in levels(sce$code)) {
+    i <- which(sce$code == cd)
+    mu <- rowMeans(clust[, i, drop = F])
+    sdv <- matrixStats::rowSds(clust[, i, drop = F])
+    sdv[is.na(sdv) | sdv == 0] <- 1
+    clust[, i] <- pmax(pmin((clust[, i, drop = F] - mu) / sdv, z_cap), -z_cap)
+  }
 }
-assay(sce, "clust") <- clust
 assay(sce, "counts") <- NULL
-rm(clust)
 gc()
 sce$flag_status <- factor(case_when(is.na(sce$keep) ~ "NA",
                                     sce$keep ~ "kept",
                                     TRUE ~ sce$flag_reason))
 sce
 print(table(sce$cell_type, sce$flag_status))
-
-missing <- setdiff(pca_features, rownames(sce))
-if (length(missing)) stop("pca_features not in rownames(sce): ", paste(missing, collapse = ", "))
 
 save_umap <- function(p, file, w){
   ggsave(filename = paste0(results_dir, file),
@@ -122,11 +141,10 @@ umap_plots <- function(dimred, prefix) {
 
 # Dimensional reduction ---------------------------------------------------
 
-sce <- scater::runPCA(sce,
-                      scale = F,
-                      exprs_values = "clust",
-                      subset_row = pca_features,
-                      ncomponents = length(pca_features))
+reducedDim(sce, "PCA") <- scater::calculatePCA(clust, ncomponents = length(pca_features),
+                                               ntop = nrow(clust), scale = F)
+rm(clust)
+gc()
 stopifnot(num_pcs <= ncol(reducedDim(sce, "PCA")))
 
 # PCA loadings ------------------------------------------------------------
