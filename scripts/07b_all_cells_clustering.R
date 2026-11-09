@@ -17,8 +17,15 @@ clust_norm <- Sys.getenv("PCF_NORM", "dataset_z")
 if (!clust_norm %in% norms) stop("PCF_NORM must be one of ", paste(norms, collapse = ", "))
 message("Clustering input: ", clust_norm)
 
-results_dir <- paste0("results/07b_all_cells/", clust_norm, "/")
-data_dir <- paste0("data/07b_all_cells/", clust_norm, "/all/")
+# knn: UMAP-style fuzzy kNN graph (scanpy sc.pp.neighbors, as in the AD paper); snn: bluster shared-neighbour graph
+graph_type <- Sys.getenv("PCF_GRAPH", "knn")
+if (!graph_type %in% c("knn", "snn")) stop("PCF_GRAPH must be knn or snn")
+graph_k <- as.integer(Sys.getenv("PCF_K", if (graph_type == "knn") "150" else "15"))
+run_name <- if (graph_type == "snn" && graph_k == 15) clust_norm else paste0(clust_norm, "_", graph_type, graph_k)
+message("Graph: ", graph_type, ", k = ", graph_k, "; outputs: ", run_name)
+
+results_dir <- paste0("results/07b_all_cells/", run_name, "/")
+data_dir <- paste0("data/07b_all_cells/", run_name, "/all/")
 dir.create(results_dir, showWarnings = F, recursive = T)
 dir.create(data_dir, showWarnings = F, recursive = T)
 
@@ -30,7 +37,6 @@ pca_features <- c("TMEM119", "Olig-2", "CD3e", "CD4",
 num_pcs <- length(pca_features) - 1
 leiden_res <- c(0.1, 0.3, 0.5, 1)
 z_cap <- 10
-snn_k <- 15
 
 sce <- readRDS("data/05_object_creation/spe.rds")
 if (clust_norm == "dataset_z" && !"z" %in% assayNames(sce)) stop("no z assay in the SPE; rerun 05 to the end")
@@ -186,11 +192,21 @@ ggsave(paste0(results_dir, "harmony_umap_markers.png"), p, width = 16, height = 
 
 # Leiden clustering -------------------------------------------------------
 
-snn_args <- list(reducedDim(sce, "HARMONY")[, 1:num_pcs], k = snn_k, BNPARAM = BiocNeighbors::AnnoyParam())
-if ("num.threads" %in% names(formals(bluster::makeSNNGraph))) snn_args$num.threads <- n_cores else
-  snn_args$BPPARAM <- BiocParallel::MulticoreParam(n_cores)
 set.seed(1)
-graph <- do.call(bluster::makeSNNGraph, snn_args)
+if (graph_type == "knn") {
+  if (!exists("similarity_graph", envir = asNamespace("uwot"))) stop("uwot too old for similarity_graph(); update uwot")
+  fg <- uwot::similarity_graph(reducedDim(sce, "HARMONY")[, 1:num_pcs], n_neighbors = graph_k,
+                               nn_method = "annoy", n_threads = n_cores, verbose = T)
+  graph <- igraph::graph_from_adjacency_matrix(fg, mode = "undirected", weighted = T, diag = F)
+  rm(fg)
+} else {
+  snn_args <- list(reducedDim(sce, "HARMONY")[, 1:num_pcs], k = graph_k, BNPARAM = BiocNeighbors::AnnoyParam())
+  if ("num.threads" %in% names(formals(bluster::makeSNNGraph))) snn_args$num.threads <- n_cores else
+    snn_args$BPPARAM <- BiocParallel::MulticoreParam(n_cores)
+  graph <- do.call(bluster::makeSNNGraph, snn_args)
+}
+message("Graph: ", igraph::vcount(graph), " cells, ", igraph::ecount(graph), " edges")
+gc()
 
 leiden <- function(g, res) {
   args <- list(g, objective_function = "modularity", n_iterations = 5)
