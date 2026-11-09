@@ -26,7 +26,9 @@ REQUIRED = {"myeloid": ["CD11c", "Iba-1", "TMEM119", "CD163"],
             "cortical_neuron": ["MAP-2", "NeuN"],
             "tcell": ["CD3e", "CD4", "CD8"],
             "astrocyte": ["Vimentin", "GFAP", "Collagen IV", "Claudin-5"],
-            "oligodendrocyte": ["Olig-2"]}
+            "oligodendrocyte": ["Olig-2"],
+            "all": ["NeuN", "MAP-2", "GFAP", "Vimentin", "Olig-2", "Iba-1", "TMEM119", "CD163", "CD11c",
+                    "CD3e", "CD4", "CD8"]}
 OTHER = (150, 150, 150)
 TARGET = (255, 0, 255)
 GAP = 4
