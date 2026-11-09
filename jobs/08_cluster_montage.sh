@@ -11,7 +11,7 @@
 
 # all 07 groups at every Leiden resolution in 07: sbatch jobs/08_cluster_montage.sh
 # options: sbatch --export=ALL,PCF_RES="0.3 1",PCF_GROUP="myeloid oligodendrocyte",PCF_N=50 jobs/08_cluster_montage.sh
-# 07b (all cells): sbatch --export=ALL,PCF_CLUSTERS_DIR=data/07b_all_cells,PCF_OUT=results/08_cluster_montage_07b/ jobs/08_cluster_montage.sh
+# 07b (all cells): sbatch --export=ALL,PCF_CLUSTERS_DIR=data/07b_all_cells/dataset_z,PCF_OUT=results/08_cluster_montage_07b/dataset_z/ jobs/08_cluster_montage.sh
 # separate .jpg files instead of images embedded in the HTML: add PCF_NO_EMBED=1
 
 cd /gpfs/projects/b1169/boles/als_cns_pcf

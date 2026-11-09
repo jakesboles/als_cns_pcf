@@ -9,7 +9,8 @@
 #SBATCH --time 24:00:00
 #SBATCH --output /gpfs/projects/b1169/boles/als_cns_pcf/logs/%x_%j.log
 
-# sbatch jobs/07b_all_cells_clustering.sh
+# dataset-wide z (default): sbatch jobs/07b_all_cells_clustering.sh
+# log1p + per-section z: sbatch --export=ALL,PCF_NORM=log_section_z jobs/07b_all_cells_clustering.sh
 
 cd /gpfs/projects/b1169/boles/als_cns_pcf
 

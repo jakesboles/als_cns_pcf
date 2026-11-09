@@ -11,8 +11,14 @@ suppressPackageStartupMessages({
 
 setwd("/projects/b1169/boles/als_cns_pcf")
 
-results_dir <- "results/07b_all_cells/"
-data_dir <- "data/07b_all_cells/all/"
+# dataset_z: 05's z (raw, all cells, whole dataset; Hickey 2021); log_section_z: log1p, z per section, capped
+norms <- c("dataset_z", "log_section_z")
+clust_norm <- Sys.getenv("PCF_NORM", "dataset_z")
+if (!clust_norm %in% norms) stop("PCF_NORM must be one of ", paste(norms, collapse = ", "))
+message("Clustering input: ", clust_norm)
+
+results_dir <- paste0("results/07b_all_cells/", clust_norm, "/")
+data_dir <- paste0("data/07b_all_cells/", clust_norm, "/all/")
 dir.create(results_dir, showWarnings = F, recursive = T)
 dir.create(data_dir, showWarnings = F, recursive = T)
 
@@ -27,23 +33,27 @@ z_cap <- 10
 snn_k <- 15
 
 sce <- readRDS("data/05_object_creation/spe.rds")
-assays(sce) <- assays(sce)[c("counts", "asinh")]
+if (clust_norm == "dataset_z" && !"z" %in% assayNames(sce)) stop("no z assay in the SPE; rerun 05 to the end")
 sce$cell_type <- factor(sce$cell_type)
 sce$code <- factor(sce$code)
 
 missing <- setdiff(pca_features, rownames(sce))
 if (length(missing)) stop("pca_features not in rownames(sce): ", paste(missing, collapse = ", "))
 
-# clustering input: log1p, then z per section over all cells, capped at +-10; panel markers only
-clust <- log1p(pmax(as.matrix(assay(sce, "counts")[pca_features, , drop = F]), 0))
-for (cd in levels(sce$code)) {
-  i <- which(sce$code == cd)
-  mu <- rowMeans(clust[, i, drop = F])
-  sdv <- matrixStats::rowSds(clust[, i, drop = F])
-  sdv[is.na(sdv) | sdv == 0] <- 1
-  clust[, i] <- pmax(pmin((clust[, i, drop = F] - mu) / sdv, z_cap), -z_cap)
+# clustering input, panel markers only
+if (clust_norm == "dataset_z") {
+  clust <- as.matrix(assay(sce, "z")[pca_features, , drop = F])
+} else {
+  clust <- log1p(pmax(as.matrix(assay(sce, "counts")[pca_features, , drop = F]), 0))
+  for (cd in levels(sce$code)) {
+    i <- which(sce$code == cd)
+    mu <- rowMeans(clust[, i, drop = F])
+    sdv <- matrixStats::rowSds(clust[, i, drop = F])
+    sdv[is.na(sdv) | sdv == 0] <- 1
+    clust[, i] <- pmax(pmin((clust[, i, drop = F] - mu) / sdv, z_cap), -z_cap)
+  }
 }
-assay(sce, "counts") <- NULL
+assays(sce) <- assays(sce)["asinh"]
 gc()
 sce$flag_status <- factor(case_when(is.na(sce$keep) ~ "NA",
                                     sce$keep ~ "kept",
