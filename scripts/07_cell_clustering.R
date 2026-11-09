@@ -42,6 +42,7 @@ pca_features <- c("TMEM119", "Olig-2", "CD3e", "CD4",
                   "Iba-1", "CD163", "CD8")
 num_pcs <- length(pca_features) - 1
 leiden_res <- c(0.1, 0.3, 0.5, 1)
+z_cap <- 10
 snn_k <- 15
 
 sce <- readRDS("data/05_object_creation/spe.rds")
@@ -62,9 +63,23 @@ if (length(uncovered)) warning("cell types in no group (not embedded): ", paste(
 
 sce <- sce[, sce$cell_type %in% cell_groups[[cell_group]]]
 gc()
-assays(sce) <- assays(sce)[c("z", "asinh")]
+assays(sce) <- assays(sce)[c("counts", "asinh")]
 sce$cell_type <- factor(sce$cell_type)
 sce$code <- factor(sce$code)
+
+# clustering input (AD CODEX-CNS style): log1p, then z per section within this group, capped at +-10
+clust <- log1p(pmax(assay(sce, "counts"), 0))
+for (cd in levels(sce$code)) {
+  i <- which(sce$code == cd)
+  mu <- rowMeans(clust[, i, drop = F])
+  sdv <- matrixStats::rowSds(clust[, i, drop = F])
+  sdv[is.na(sdv) | sdv == 0] <- 1
+  clust[, i] <- pmax(pmin((clust[, i, drop = F] - mu) / sdv, z_cap), -z_cap)
+}
+assay(sce, "clust") <- clust
+assay(sce, "counts") <- NULL
+rm(clust)
+gc()
 sce$flag_status <- factor(case_when(is.na(sce$keep) ~ "NA",
                                     sce$keep ~ "kept",
                                     TRUE ~ sce$flag_reason))
@@ -109,7 +124,7 @@ umap_plots <- function(dimred, prefix) {
 
 sce <- scater::runPCA(sce,
                       scale = F,
-                      exprs_values = "z",
+                      exprs_values = "clust",
                       subset_row = pca_features,
                       ncomponents = length(pca_features))
 stopifnot(num_pcs <= ncol(reducedDim(sce, "PCA")))
