@@ -13,6 +13,8 @@
 # tasks: 1 astrocyte, 2 cortical_neuron, 3 myeloid, 4 oligodendrocyte, 5 tcell (cd4 + cd8); order = cell_groups in 07
 # all groups: sbatch jobs/07_cell_clustering.sh
 # some groups: sbatch --array=3,5 jobs/07_cell_clustering.sh
+# all channels in the PCA instead of the 11-marker panel: sbatch --export=ALL,PCF_FEATURES=all jobs/07_cell_clustering.sh
+#   (outputs results|data/07_cell_clustering_all_features/<group>/; 12 PCs, PCF_NPCS to change)
 
 cd /gpfs/projects/b1169/boles/als_cns_pcf
 
