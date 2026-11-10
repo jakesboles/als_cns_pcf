@@ -30,12 +30,13 @@ if (cell_group == "") {
 if (!cell_group %in% names(cell_groups)) stop("Unknown PCF_GROUP ", cell_group, "; one of ", paste(names(cell_groups), collapse = ", "))
 message("Cell group: ", cell_group, " (", paste(cell_groups[[cell_group]], collapse = ", "), ")")
 
-# panel: pca_features only; all: every channel kept in 05
+# panel: pca_features; group: pca_features + cell_panels[[cell_group]]; all: every channel kept in 05
 feature_set <- Sys.getenv("PCF_FEATURES", "panel")
-if (!feature_set %in% c("panel", "all")) stop("PCF_FEATURES must be panel or all")
+if (!feature_set %in% c("panel", "group", "all")) stop("PCF_FEATURES must be panel, group or all")
 message("PCA features: ", feature_set)
 
-step_dir <- if (feature_set == "all") "07_cell_clustering_all_features" else "07_cell_clustering"
+step_dir <- switch(feature_set, panel = "07_cell_clustering", group = "07_cell_clustering_group_panel",
+                   all = "07_cell_clustering_all_features")
 results_dir <- paste0("results/", step_dir, "/", cell_group, "/")
 data_dir <- paste0("data/", step_dir, "/", cell_group, "/")
 dir.create(results_dir, showWarnings = F, recursive = T)
@@ -46,7 +47,15 @@ n_cores <- as.integer(Sys.getenv("SLURM_CPUS_PER_TASK", "1"))
 pca_features <- c("TMEM119", "Olig-2", "CD3e", "CD4",
                   "NeuN", "GFAP", "Vimentin", "CD11c",
                   "Iba-1", "CD163", "CD8")
-num_pcs <- as.integer(Sys.getenv("PCF_NPCS", if (feature_set == "all") "12" else as.character(length(pca_features) - 1)))
+# added to pca_features with PCF_FEATURES=group
+cell_panels <- list(
+  astrocyte = c("Collagen IV", "Claudin-5", "CD31"),
+  cortical_neuron = c(),
+  myeloid = c("LYVE-1", "Collagen IV", "Claudin-5", "CD31", "CD14"),
+  oligodendrocyte = c("Serotonin"),
+  tcell = c()
+)
+stopifnot(setequal(names(cell_panels), names(cell_groups)))
 leiden_res <- c(0.1, 0.3, 0.5, 1)
 z_cap <- 10
 snn_k <- 15
@@ -68,6 +77,8 @@ uncovered <- setdiff(unique(sce$cell_type), unlist(cell_groups))
 if (length(uncovered)) warning("cell types in no group (not embedded): ", paste(uncovered, collapse = ", "))
 
 sce <- sce[, sce$cell_type %in% cell_groups[[cell_group]]]
+message("Removing ", sum(sce$flag_size %in% TRUE), " cells that failed the size filter")
+sce <- sce[, !(sce$flag_size %in% TRUE)]
 gc()
 assays(sce) <- assays(sce)[c("counts", "asinh")]
 sce$cell_type <- factor(sce$cell_type)
@@ -94,7 +105,12 @@ print(table(sce$cell_type, sce$flag_status))
 
 missing <- setdiff(pca_features, rownames(sce))
 if (length(missing)) stop("pca_features not in rownames(sce): ", paste(missing, collapse = ", "))
-clust_features <- if (feature_set == "all") rownames(sce) else pca_features
+clust_features <- switch(feature_set, panel = pca_features, all = rownames(sce),
+                         group = unique(c(pca_features, cell_panels[[cell_group]])))
+missing <- setdiff(clust_features, rownames(sce))
+if (length(missing)) stop("cell_panels$", cell_group, " not in rownames(sce): ", paste(missing, collapse = ", "))
+npcs_env <- Sys.getenv("PCF_NPCS")
+num_pcs <- if (nzchar(npcs_env)) as.integer(npcs_env) else if (feature_set == "all") 12 else length(clust_features) - 1
 message(length(clust_features), " PCA features, ", num_pcs, " PCs used")
 
 save_umap <- function(p, file, w){

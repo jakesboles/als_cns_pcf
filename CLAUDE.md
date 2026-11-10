@@ -103,6 +103,19 @@ Phase 1 (current): import HALO object data, annotate objects with spatial contex
     - Plots stay readable with 30 PCs: the loadings heatmap grows with the number of PCs and channels, and `pca_top_loadings.png` shows at most the first 20 PCs. With the panel both plots are unchanged.
     - Outputs: 07b → `results|data/07b_all_cells/<norm>_all_features/`; 07 → `results|data/07_cell_clustering_all_features/<group>/`.
     - 08 on them: `PCF_CLUSTERS_DIR=data/07b_all_cells/<norm>_all_features` or `data/07_cell_clustering_all_features`, with a matching `PCF_OUT`.
+  - **Per-group extra markers and size filter (PR 38, user, 2026-11-10)**:
+    - 07's `PCF_FEATURES` gains `group`: `pca_features` **plus** `cell_panels[[group]]`. The current extras:
+      - astrocyte: Collagen IV, Claudin-5, CD31
+      - myeloid: LYVE-1, Collagen IV, Claudin-5, CD31, CD14
+      - oligodendrocyte: Serotonin
+      - cortical_neuron and tcell: none
+    - With no extras for a group, `group` gives the same feature set as `panel`.
+    - Names are checked against the SPE, and the script stops listing any it can't find. Spellings are unverified (`LYVE-1` vs `LYVE1`, `CD31`, `CD14`, `Serotonin`).
+    - `num_pcs` defaults to the number of features − 1 (panel 10; myeloid 15, astrocyte 13, oligodendrocyte 11 with `group`), 12 for `all`; `PCF_NPCS` overrides.
+    - Outputs go to `results|data/07_cell_clustering_group_panel/<group>/`.
+    - **07 and 07b now always drop cells with `flag_size` TRUE**, right after loading or subsetting, before the per-section z and the PCA. Reason (user): these are mostly HALO negative annotations that became regular objects on export, or obvious debris. Lineage and region flags are still ignored.
+    - The default output folders are reused, so the next panel run overwrites the earlier, unfiltered results.
+    - 05's `z` assay and `marker_z_params.csv` (used by 07b `dataset_z` and by 08) were still computed with these cells included.
   - **Same caveats as PR 32**: use it for clustering and cell identification only. Here the per-section z is over all cell types, so a marker's SD includes the spread between types, which is what should separate them in an all-cell clustering.
   - **Job**: single job, 16 CPUs / 300 GB / 48 h since PR 36, unmeasured (the graph and Leiden run on millions of cells). Check `seff`, and whether b1169 nodes allow 240 GB. **Not run** (no R in the Claude session).
 - **Old 08/09 deleted (PR 25, user, 2026-11-07)**: `08_loadings_clustering.R` (PR 20; loadings and all-cell Leiden, superseded by 07's per-group clustering) and `09_cluster_geojson.py` (PR 22/23; per-cluster QuPath geoJSONs). Both are in git history if needed. The user prefers cell-level QC by image review (new 08) before building further on the object.

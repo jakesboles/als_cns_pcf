@@ -45,6 +45,8 @@ leiden_res <- c(0.1, 0.3, 0.5, 1)
 z_cap <- 10
 
 sce <- readRDS("data/05_object_creation/spe.rds")
+message("Removing ", sum(sce$flag_size %in% TRUE), " cells that failed the size filter")
+sce <- sce[, !(sce$flag_size %in% TRUE)]
 if (clust_norm == "dataset_z" && !"z" %in% assayNames(sce)) stop("no z assay in the SPE; rerun 05 to the end")
 sce$cell_type <- factor(sce$cell_type)
 sce$code <- factor(sce$code)
