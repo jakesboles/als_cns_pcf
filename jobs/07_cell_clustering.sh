@@ -15,6 +15,10 @@
 # some groups: sbatch --array=3,5 jobs/07_cell_clustering.sh
 # all channels in the PCA instead of the 11-marker panel: sbatch --export=ALL,PCF_FEATURES=all jobs/07_cell_clustering.sh
 #   (outputs results|data/07_cell_clustering_all_features/<group>/; 12 PCs, PCF_NPCS to change)
+# panel + per-group extra markers (cell_panels in 07): sbatch --export=ALL,PCF_FEATURES=group jobs/07_cell_clustering.sh
+#   (outputs results|data/07_cell_clustering_group_panel/<group>/)
+# per-section z over all cell types (then subset to the group): add PCF_Z_SCOPE=all_cells (outputs get suffix _allcell_z)
+#   e.g. sbatch --export=ALL,PCF_FEATURES=group,PCF_Z_SCOPE=all_cells jobs/07_cell_clustering.sh
 
 cd /gpfs/projects/b1169/boles/als_cns_pcf
 
