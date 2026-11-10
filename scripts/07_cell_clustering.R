@@ -35,8 +35,14 @@ feature_set <- Sys.getenv("PCF_FEATURES", "panel")
 if (!feature_set %in% c("panel", "group", "all")) stop("PCF_FEATURES must be panel, group or all")
 message("PCA features: ", feature_set)
 
-step_dir <- switch(feature_set, panel = "07_cell_clustering", group = "07_cell_clustering_group_panel",
-                   all = "07_cell_clustering_all_features")
+# group: per-section z over this group's cells; all_cells: per-section z over all cell types, then subset
+z_scope <- Sys.getenv("PCF_Z_SCOPE", "group")
+if (!z_scope %in% c("group", "all_cells")) stop("PCF_Z_SCOPE must be group or all_cells")
+message("Per-section z scope: ", z_scope)
+
+step_dir <- paste0(switch(feature_set, panel = "07_cell_clustering", group = "07_cell_clustering_group_panel",
+                          all = "07_cell_clustering_all_features"),
+                   if (z_scope == "all_cells") "_allcell_z" else "")
 results_dir <- paste0("results/", step_dir, "/", cell_group, "/")
 data_dir <- paste0("data/", step_dir, "/", cell_group, "/")
 dir.create(results_dir, showWarnings = F, recursive = T)
@@ -51,7 +57,7 @@ pca_features <- c("TMEM119", "Olig-2", "CD3e", "CD4",
 cell_panels <- list(
   astrocyte = c("Collagen IV", "Claudin-5", "CD31"),
   cortical_neuron = c(),
-  myeloid = c("LYVE-1", "Collagen IV", "Claudin-5", "CD31", "CD14"),
+  myeloid = c("LYVE1", "Collagen IV", "Claudin-5", "CD31", "CD14"),
   oligodendrocyte = c("Serotonin"),
   tcell = c()
 )
@@ -76,21 +82,42 @@ if (length(missing_types)) stop("cell types not in the SPE: ", paste(missing_typ
 uncovered <- setdiff(unique(sce$cell_type), unlist(cell_groups))
 if (length(uncovered)) warning("cell types in no group (not embedded): ", paste(uncovered, collapse = ", "))
 
-sce <- sce[, sce$cell_type %in% cell_groups[[cell_group]]]
 message("Removing ", sum(sce$flag_size %in% TRUE), " cells that failed the size filter")
 sce <- sce[, !(sce$flag_size %in% TRUE)]
+
+if (z_scope == "all_cells") {
+  codes <- sort(unique(as.character(sce$code)))
+  z_mu <- z_sd <- matrix(NA_real_, nrow(sce), length(codes), dimnames = list(rownames(sce), codes))
+  for (cd in codes) {
+    x <- log1p(pmax(as.matrix(assay(sce, "counts")[, sce$code == cd, drop = F]), 0))
+    z_mu[, cd] <- rowMeans(x)
+    z_sd[, cd] <- matrixStats::rowSds(x)
+  }
+  rm(x)
+  z_sd[is.na(z_sd) | z_sd == 0] <- 1
+  write.csv(rbind(cbind(stat = "mean", marker = rownames(z_mu), as.data.frame(z_mu)),
+                  cbind(stat = "sd", marker = rownames(z_sd), as.data.frame(z_sd))),
+            paste0(results_dir, "section_z_params.csv"), row.names = F)
+}
+
+sce <- sce[, sce$cell_type %in% cell_groups[[cell_group]]]
 gc()
 assays(sce) <- assays(sce)[c("counts", "asinh")]
 sce$cell_type <- factor(sce$cell_type)
 sce$code <- factor(sce$code)
 
-# clustering input (AD CODEX-CNS style): log1p, then z per section within this group, capped at +-10
+# clustering input (AD CODEX-CNS style): log1p, then z per section (scope above), capped at +-10
 clust <- log1p(pmax(assay(sce, "counts"), 0))
 for (cd in levels(sce$code)) {
   i <- which(sce$code == cd)
-  mu <- rowMeans(clust[, i, drop = F])
-  sdv <- matrixStats::rowSds(clust[, i, drop = F])
-  sdv[is.na(sdv) | sdv == 0] <- 1
+  if (z_scope == "all_cells") {
+    mu <- z_mu[, cd]
+    sdv <- z_sd[, cd]
+  } else {
+    mu <- rowMeans(clust[, i, drop = F])
+    sdv <- matrixStats::rowSds(clust[, i, drop = F])
+    sdv[is.na(sdv) | sdv == 0] <- 1
+  }
   clust[, i] <- pmax(pmin((clust[, i, drop = F] - mu) / sdv, z_cap), -z_cap)
 }
 assay(sce, "clust") <- clust

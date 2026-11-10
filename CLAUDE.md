@@ -106,16 +106,22 @@ Phase 1 (current): import HALO object data, annotate objects with spatial contex
   - **Per-group extra markers and size filter (PR 38, user, 2026-11-10)**:
     - 07's `PCF_FEATURES` gains `group`: `pca_features` **plus** `cell_panels[[group]]`. The current extras:
       - astrocyte: Collagen IV, Claudin-5, CD31
-      - myeloid: LYVE-1, Collagen IV, Claudin-5, CD31, CD14
+      - myeloid: LYVE1, Collagen IV, Claudin-5, CD31, CD14
       - oligodendrocyte: Serotonin
       - cortical_neuron and tcell: none
     - With no extras for a group, `group` gives the same feature set as `panel`.
-    - Names are checked against the SPE, and the script stops listing any it can't find. Spellings are unverified (`LYVE-1` vs `LYVE1`, `CD31`, `CD14`, `Serotonin`).
+    - Names are checked against the SPE, and the script stops listing any it can't find. Spellings confirmed by the user (`LYVE1`, not `LYVE-1`).
     - `num_pcs` defaults to the number of features − 1 (panel 10; myeloid 15, astrocyte 13, oligodendrocyte 11 with `group`), 12 for `all`; `PCF_NPCS` overrides.
     - Outputs go to `results|data/07_cell_clustering_group_panel/<group>/`.
     - **07 and 07b now always drop cells with `flag_size` TRUE**, right after loading or subsetting, before the per-section z and the PCA. Reason (user): these are mostly HALO negative annotations that became regular objects on export, or obvious debris. Lineage and region flags are still ignored.
     - The default output folders are reused, so the next panel run overwrites the earlier, unfiltered results.
     - 05's `z` assay and `marker_z_params.csv` (used by 07b `dataset_z` and by 08) were still computed with these cells included.
+    - **`PCF_Z_SCOPE=all_cells`** (user, 2026-11-10, same PR): the per-section log1p z uses means and SDs from **all cell types** in each section (after the size filter), and only then is the data subset to the group. The default `group` scope keeps the within-group z.
+      - Why (the user asked how to make e.g. Olig-2 count more than T cell markers in oligodendrocytes): with the within-group z, every marker has variance ≈ 1 inside the group, so markers that are only background there (CD3e/CD4/CD8 in oligodendrocytes) count as much as the lineage marker. `scale = T/F` in the PCA makes almost no difference for the same reason.
+      - With the all-cell scope, a marker's variance inside the group is measured against its spread across all cell types. Background-only markers shrink, and real within-group variation keeps its relative size. Same ±10 cap.
+      - Means and SDs are computed per section on the full object (one section's dense matrix at a time) and written to `section_z_params.csv` (stat × marker rows, code columns).
+      - Output folders get the suffix `_allcell_z`, e.g. `07_cell_clustering_group_panel_allcell_z/<group>/`.
+      - Other options discussed with the user but not implemented: drop background-only markers per group, explicit marker weights after z, and a noise floor at 05's background threshold before log/z.
   - **Same caveats as PR 32**: use it for clustering and cell identification only. Here the per-section z is over all cell types, so a marker's SD includes the spread between types, which is what should separate them in an all-cell clustering.
   - **Job**: single job, 16 CPUs / 300 GB / 48 h since PR 36, unmeasured (the graph and Leiden run on millions of cells). Check `seff`, and whether b1169 nodes allow 240 GB. **Not run** (no R in the Claude session).
 - **Old 08/09 deleted (PR 25, user, 2026-11-07)**: `08_loadings_clustering.R` (PR 20; loadings and all-cell Leiden, superseded by 07's per-group clustering) and `09_cluster_geojson.py` (PR 22/23; per-cluster QuPath geoJSONs). Both are in git history if needed. The user prefers cell-level QC by image review (new 08) before building further on the object.
