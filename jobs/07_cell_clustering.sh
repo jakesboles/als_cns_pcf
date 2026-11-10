@@ -1,6 +1,6 @@
 #!/bin/bash
-#SBATCH --account b1169
-#SBATCH --partition b1169
+#SBATCH --account b1042
+#SBATCH --partition genomics
 #SBATCH --job-name 07_cell_clustering
 #SBATCH --array 1-5
 #SBATCH --nodes 1
