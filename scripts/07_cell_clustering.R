@@ -30,8 +30,14 @@ if (cell_group == "") {
 if (!cell_group %in% names(cell_groups)) stop("Unknown PCF_GROUP ", cell_group, "; one of ", paste(names(cell_groups), collapse = ", "))
 message("Cell group: ", cell_group, " (", paste(cell_groups[[cell_group]], collapse = ", "), ")")
 
-results_dir <- paste0("results/07_cell_clustering/", cell_group, "/")
-data_dir <- paste0("data/07_cell_clustering/", cell_group, "/")
+# panel: pca_features only; all: every channel kept in 05
+feature_set <- Sys.getenv("PCF_FEATURES", "panel")
+if (!feature_set %in% c("panel", "all")) stop("PCF_FEATURES must be panel or all")
+message("PCA features: ", feature_set)
+
+step_dir <- if (feature_set == "all") "07_cell_clustering_all_features" else "07_cell_clustering"
+results_dir <- paste0("results/", step_dir, "/", cell_group, "/")
+data_dir <- paste0("data/", step_dir, "/", cell_group, "/")
 dir.create(results_dir, showWarnings = F, recursive = T)
 dir.create(data_dir, showWarnings = F, recursive = T)
 
@@ -40,7 +46,7 @@ n_cores <- as.integer(Sys.getenv("SLURM_CPUS_PER_TASK", "1"))
 pca_features <- c("TMEM119", "Olig-2", "CD3e", "CD4",
                   "NeuN", "GFAP", "Vimentin", "CD11c",
                   "Iba-1", "CD163", "CD8")
-num_pcs <- length(pca_features) - 1
+num_pcs <- as.integer(Sys.getenv("PCF_NPCS", if (feature_set == "all") "12" else as.character(length(pca_features) - 1)))
 leiden_res <- c(0.1, 0.3, 0.5, 1)
 z_cap <- 10
 snn_k <- 15
@@ -88,6 +94,8 @@ print(table(sce$cell_type, sce$flag_status))
 
 missing <- setdiff(pca_features, rownames(sce))
 if (length(missing)) stop("pca_features not in rownames(sce): ", paste(missing, collapse = ", "))
+clust_features <- if (feature_set == "all") rownames(sce) else pca_features
+message(length(clust_features), " PCA features, ", num_pcs, " PCs used")
 
 save_umap <- function(p, file, w){
   ggsave(filename = paste0(results_dir, file),
@@ -125,8 +133,8 @@ umap_plots <- function(dimred, prefix) {
 sce <- scater::runPCA(sce,
                       scale = F,
                       exprs_values = "clust",
-                      subset_row = pca_features,
-                      ncomponents = length(pca_features))
+                      subset_row = clust_features,
+                      ncomponents = min(length(clust_features), 30))
 stopifnot(num_pcs <= ncol(reducedDim(sce, "PCA")))
 
 # PCA loadings ------------------------------------------------------------
@@ -143,7 +151,8 @@ png(filename = paste0(results_dir, "pca_elbow.png"),
 plot(percent_var, log="y", xlab="PC", ylab="Variance explained (%)")
 dev.off()
 
-png(paste0(results_dir, "pca_loadings_heatmap.png"), units = "in", res = 300, height = 14, width = 7, bg = "white")
+png(paste0(results_dir, "pca_loadings_heatmap.png"), units = "in", res = 300, height = max(14, nrow(rotation) * 0.2 + 2),
+    width = max(7, ncol(rotation) * 0.35 + 3), bg = "white")
 pheatmap(rotation,
          color = colorRampPalette(c("dodgerblue", "white", "firebrick"))(101),
          breaks = seq(-max(abs(rotation)), max(abs(rotation)), length.out = 102),
@@ -156,6 +165,7 @@ top_loadings <- as.data.frame(rotation) %>%
   rownames_to_column("marker") %>%
   pivot_longer(-marker, names_to = "pc", values_to = "loading") %>%
   mutate(pc = factor(pc, levels = colnames(rotation))) %>%
+  filter(as.integer(pc) <= 20) %>%
   group_by(pc) %>%
   slice_max(abs(loading), n = 10) %>%
   ungroup() %>%
@@ -170,7 +180,7 @@ p <- top_loadings %>%
   scale_fill_manual(values = c(`TRUE` = "firebrick", `FALSE` = "dodgerblue")) +
   labs(y = NULL) +
   theme_linedraw(base_size = 8)
-ggsave(paste0(results_dir, "pca_top_loadings.png"), p, width = 12, height = 10, dpi = 300)
+ggsave(paste0(results_dir, "pca_top_loadings.png"), p, width = 12, height = max(10, 2.5 * ceiling(nlevels(droplevels(top_loadings$pc)) / 4)), dpi = 300)
 
 plot_explanatory("PCA", "explanatory_pcs.png")
 

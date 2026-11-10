@@ -17,11 +17,17 @@ clust_norm <- Sys.getenv("PCF_NORM", "dataset_z")
 if (!clust_norm %in% norms) stop("PCF_NORM must be one of ", paste(norms, collapse = ", "))
 message("Clustering input: ", clust_norm)
 
+# panel: pca_features only; all: every channel kept in 05
+feature_set <- Sys.getenv("PCF_FEATURES", "panel")
+if (!feature_set %in% c("panel", "all")) stop("PCF_FEATURES must be panel or all")
+message("PCA features: ", feature_set)
+
 # knn: UMAP-style fuzzy kNN graph (scanpy sc.pp.neighbors, as in the AD paper); snn: bluster shared-neighbour graph
-graph_type <- Sys.getenv("PCF_GRAPH", "knn")
+graph_type <- Sys.getenv("PCF_GRAPH", "snn")
 if (!graph_type %in% c("knn", "snn")) stop("PCF_GRAPH must be knn or snn")
 graph_k <- as.integer(Sys.getenv("PCF_K", if (graph_type == "knn") "150" else "15"))
-run_name <- if (graph_type == "snn" && graph_k == 15) clust_norm else paste0(clust_norm, "_", graph_type, graph_k)
+run_name <- paste0(clust_norm, if (graph_type == "snn" && graph_k == 15) "" else paste0("_", graph_type, graph_k),
+                   if (feature_set == "all") "_all_features" else "")
 message("Graph: ", graph_type, ", k = ", graph_k, "; outputs: ", run_name)
 
 results_dir <- paste0("results/07b_all_cells/", run_name, "/")
@@ -34,7 +40,7 @@ n_cores <- as.integer(Sys.getenv("SLURM_CPUS_PER_TASK", "1"))
 pca_features <- c("TMEM119", "Olig-2", "CD3e", "CD4",
                   "NeuN", "GFAP", "Vimentin", "CD11c",
                   "Iba-1", "CD163", "CD8")
-num_pcs <- length(pca_features) - 1
+num_pcs <- as.integer(Sys.getenv("PCF_NPCS", if (feature_set == "all") "12" else as.character(length(pca_features) - 1)))
 leiden_res <- c(0.1, 0.3, 0.5, 1)
 z_cap <- 10
 
@@ -45,12 +51,14 @@ sce$code <- factor(sce$code)
 
 missing <- setdiff(pca_features, rownames(sce))
 if (length(missing)) stop("pca_features not in rownames(sce): ", paste(missing, collapse = ", "))
+clust_features <- if (feature_set == "all") rownames(sce) else pca_features
+message(length(clust_features), " PCA features, ", num_pcs, " PCs used")
 
-# clustering input, panel markers only
+# clustering input, PCA features only
 if (clust_norm == "dataset_z") {
-  clust <- as.matrix(assay(sce, "z")[pca_features, , drop = F])
+  clust <- as.matrix(assay(sce, "z")[clust_features, , drop = F])
 } else {
-  clust <- log1p(pmax(as.matrix(assay(sce, "counts")[pca_features, , drop = F]), 0))
+  clust <- log1p(pmax(as.matrix(assay(sce, "counts")[clust_features, , drop = F]), 0))
   for (cd in levels(sce$code)) {
     i <- which(sce$code == cd)
     mu <- rowMeans(clust[, i, drop = F])
@@ -102,7 +110,7 @@ umap_plots <- function(dimred, prefix) {
 
 reducedDim(sce, "PCA") <- scater::calculatePCA(clust,
                                                scale = F,
-                                               ncomponents = length(pca_features))
+                                               ncomponents = min(length(clust_features), 30))
 rm(clust)
 gc()
 stopifnot(num_pcs <= ncol(reducedDim(sce, "PCA")))
@@ -121,7 +129,8 @@ png(filename = paste0(results_dir, "pca_elbow.png"),
 plot(percent_var, log="y", xlab="PC", ylab="Variance explained (%)")
 dev.off()
 
-png(paste0(results_dir, "pca_loadings_heatmap.png"), units = "in", res = 300, height = 14, width = 7, bg = "white")
+png(paste0(results_dir, "pca_loadings_heatmap.png"), units = "in", res = 300, height = max(14, nrow(rotation) * 0.2 + 2),
+    width = max(7, ncol(rotation) * 0.35 + 3), bg = "white")
 pheatmap(rotation,
          color = colorRampPalette(c("dodgerblue", "white", "firebrick"))(101),
          breaks = seq(-max(abs(rotation)), max(abs(rotation)), length.out = 102),
@@ -134,6 +143,7 @@ top_loadings <- as.data.frame(rotation) %>%
   rownames_to_column("marker") %>%
   pivot_longer(-marker, names_to = "pc", values_to = "loading") %>%
   mutate(pc = factor(pc, levels = colnames(rotation))) %>%
+  filter(as.integer(pc) <= 20) %>%
   group_by(pc) %>%
   slice_max(abs(loading), n = 10) %>%
   ungroup() %>%
@@ -148,7 +158,7 @@ p <- top_loadings %>%
   scale_fill_manual(values = c(`TRUE` = "firebrick", `FALSE` = "dodgerblue")) +
   labs(y = NULL) +
   theme_linedraw(base_size = 8)
-ggsave(paste0(results_dir, "pca_top_loadings.png"), p, width = 12, height = 10, dpi = 300)
+ggsave(paste0(results_dir, "pca_top_loadings.png"), p, width = 12, height = max(10, 2.5 * ceiling(nlevels(droplevels(top_loadings$pc)) / 4)), dpi = 300)
 
 plot_explanatory("PCA", "explanatory_pcs.png")
 
