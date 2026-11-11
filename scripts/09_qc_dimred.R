@@ -13,12 +13,14 @@ setwd("/projects/b1169/boles/als_cns_pcf")
 
 # transform, then per-marker z over the whole dataset or per section (code); one array task per method
 methods <- list(
-  asinh           = list(transform = "asinh", scope = "dataset", cap = Inf),
-  dataset_z       = list(transform = "none",  scope = "dataset", cap = Inf),
-  section_z       = list(transform = "none",  scope = "section", cap = Inf),
-  log_dataset_z   = list(transform = "log1p", scope = "dataset", cap = 10),
-  log_section_z   = list(transform = "log1p", scope = "section", cap = 10),
-  asinh_section_z = list(transform = "asinh", scope = "section", cap = 10)
+  asinh           = list(transform = "asinh", scope = "dataset", cap = Inf, harmony = T),
+  dataset_z       = list(transform = "none",  scope = "dataset", cap = Inf, harmony = T),
+  section_z       = list(transform = "none",  scope = "section", cap = Inf, harmony = T),
+  log_dataset_z   = list(transform = "log1p", scope = "dataset", cap = 10,  harmony = T),
+  log_section_z   = list(transform = "log1p", scope = "section", cap = 10,  harmony = T),
+  asinh_section_z = list(transform = "asinh", scope = "section", cap = 10,  harmony = T),
+  # AD CODEX-CNS: log1p -> ComBat by section -> sc.pp.scale(max_value = 10); no Harmony
+  ad_combat       = list(transform = "log1p", scope = "combat",  cap = 10,  harmony = F)
 )
 
 method <- Sys.getenv("PCF_METHOD")
@@ -145,14 +147,30 @@ num_pcs <- if (nzchar(npcs_env)) as.integer(npcs_env) else if (feature_set == "a
 m <- methods[[method]]
 x <- as.matrix(assay(sce, if (m$transform == "asinh") "asinh" else "counts")[clust_features, , drop = F])
 if (m$transform == "log1p") x <- log1p(pmax(x, 0))
-zscore <- function(v) {
+zscore <- function(v, cap = m$cap, lower = T) {
   mu <- rowMeans(v)
   sdv <- matrixStats::rowSds(v)
   sdv[is.na(sdv) | sdv == 0] <- 1
-  pmax(pmin((v - mu) / sdv, m$cap), -m$cap)
+  v <- pmin((v - mu) / sdv, cap)
+  if (lower) pmax(v, -cap) else v
 }
+ad_display <- NULL
 if (m$scope == "dataset") {
   x <- zscore(x)
+} else if (m$scope == "combat") {
+  if (!requireNamespace("sva", quietly = T)) stop("ad_combat needs the Bioconductor package sva")
+  x <- sva::ComBat(x, batch = as.character(sce$code), par.prior = T, prior.plots = F)
+  # scanpy's scale clips only the upper end
+  x <- zscore(x, lower = F)
+  reducedDim(sce, "SCALED") <- t(x)
+  # their display UMAP input: z within sample, then z over all cells
+  u <- x
+  for (cd in levels(sce$code)) {
+    i <- which(sce$code == cd)
+    u[, i] <- zscore(u[, i, drop = F], cap = Inf)
+  }
+  ad_display <- t(zscore(u, cap = Inf))
+  rm(u)
 } else {
   for (cd in levels(sce$code)) {
     i <- which(sce$code == cd)
@@ -223,16 +241,27 @@ reducedDim(sce, "UMAP") <- uwot::umap(reducedDim(sce, "PCA")[, 1:num_pcs], n_nei
                                       n_threads = n_cores, n_sgd_threads = n_cores, verbose = T)
 umap_plots("UMAP", "raw")
 
-sce <- RunHarmony(sce, group.by.vars = "code")
-plot_explanatory("HARMONY", "explanatory_harmony.png")
+if (m$harmony) {
+  sce <- RunHarmony(sce, group.by.vars = "code")
+  plot_explanatory("HARMONY", "explanatory_harmony.png")
 
-set.seed(1)
-reducedDim(sce, "HARMONY_UMAP") <- uwot::umap(reducedDim(sce, "HARMONY")[, 1:num_pcs], n_neighbors = 15,
-                                              n_threads = n_cores, n_sgd_threads = n_cores)
-umap_plots("HARMONY_UMAP", "harmony")
+  set.seed(1)
+  reducedDim(sce, "HARMONY_UMAP") <- uwot::umap(reducedDim(sce, "HARMONY")[, 1:num_pcs], n_neighbors = 15,
+                                                n_threads = n_cores, n_sgd_threads = n_cores)
+  umap_plots("HARMONY_UMAP", "harmony")
+}
 
-dims <- map(c(PCA = "PCA", UMAP = "UMAP", HARMONY = "HARMONY", HARMONY_UMAP = "HARMONY_UMAP"),
-            ~ `rownames<-`(reducedDim(sce, .x), sce$cell_id))
+if (!is.null(ad_display)) {
+  # umap-learn defaults, as in their fabian_style_clustering()
+  set.seed(1)
+  reducedDim(sce, "AD_UMAP") <- uwot::umap(ad_display, n_neighbors = 15, min_dist = 0.1,
+                                           n_threads = n_cores, n_sgd_threads = n_cores)
+  rm(ad_display)
+  umap_plots("AD_UMAP", "ad_display")
+}
+
+dr_names <- intersect(c("PCA", "UMAP", "HARMONY", "HARMONY_UMAP", "SCALED", "AD_UMAP"), reducedDimNames(sce))
+dims <- map(set_names(dr_names), ~ `rownames<-`(reducedDim(sce, .x), sce$cell_id))
 saveRDS(dims, paste0(data_dir, "reduced_dims.rds"))
 
 # Separation scores -------------------------------------------------------
@@ -240,8 +269,9 @@ saveRDS(dims, paste0(data_dir, "reduced_dims.rds"))
 # silhouette on up to 1000 cells per cell_type2: high for cell_type2 = types apart; near 0 for code = sections mixed
 set.seed(1)
 sil_idx <- unlist(map(split(seq_len(ncol(sce)), sce$cell_type2), ~ if (length(.x) > 1000) sample(.x, 1000) else .x))
-sil <- map_dfr(c("PCA", "HARMONY"), function(dr) {
-  d <- dist(reducedDim(sce, dr)[sil_idx, 1:num_pcs])
+sil <- map_dfr(intersect(c("PCA", "HARMONY", "SCALED"), reducedDimNames(sce)), function(dr) {
+  emb <- reducedDim(sce, dr)
+  d <- dist(emb[sil_idx, if (dr == "SCALED") seq_len(ncol(emb)) else 1:num_pcs, drop = F])
   map_dfr(c("cell_type2", "code"), function(v) {
     lab <- colData(sce)[[v]][sil_idx]
     s <- cluster::silhouette(as.integer(factor(lab)), d)[, "sil_width"]

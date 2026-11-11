@@ -131,19 +131,29 @@ Phase 1 (current): import HALO object data, annotate objects with spatial contex
     - `cell_type2` = `Remove` / `Macrophage` / `Microglia` / the original `cell_type`.
     - `data/09_qc_dimred/filtered_data.csv` (non-removed cells, metadata + coordinates) is written by the first array task, or by any non-array run.
     - **Size filter added (PR 40)**: the 07 cluster tables don't contain size-flagged cells, so the user's draft would have kept them (myeloid ones as "Microglia"). `flag_size` TRUE now also gives `Remove`.
-  - **Methods** (`methods` list; `PCF_METHOD` or array task 1–6). Each is a transform, then a per-marker z over the dataset or per section (`code`), with an optional cap:
+  - **Methods** (`methods` list; `PCF_METHOD` or array task 1–7; each entry also has a `harmony` switch). Each is a transform, then a per-marker z over the dataset or per section (`code`), with an optional cap:
     1. `asinh`: 05's asinh assay, z over all cells (= PCA with `scale = T` on asinh).
     2. `dataset_z`: raw, z over all cells (Hickey 2021).
     3. `section_z`: raw, z per section (SPACEc).
     4. `log_dataset_z`: log1p, z over all cells, cap ±10 (new suggestion: keeps donor/disease differences while fixing the bright-tail problem of raw z).
     5. `log_section_z`: log1p, z per section, cap ±10 (AD paper / 07b).
     6. `asinh_section_z`: asinh, z per section, cap ±10 (new suggestion).
+    7. `ad_combat` (PR 42, user, 2026-11-11): the AD CODEX-CNS notebook as closely as 09 allows. The user wanted to check my claim that it is effectively `log_section_z`.
+       - Preprocessing: log1p → `sva::ComBat(batch = code, par.prior = T)` with no covariates (scanpy's `pp.combat` is a port of it) → z over all cells with values above 10 clipped (scanpy's `scale(max_value = 10)` in the versions of that era clips only the upper end).
+       - PCA: `num_pcs` = features − 1 = 10, matching scanpy's default `n_comps` for 11 markers.
+       - **No Harmony**, so there are no `harmony_*` outputs.
+       - Extra outputs:
+         - reducedDim `SCALED`: the clipped z matrix itself, which is what they built the k = 150 neighbour graph on.
+         - `ad_display_umap_*.png`: their display UMAP recipe (`fabian_style_clustering`): z within section, then z over all cells, then UMAP directly on the markers with umap-learn defaults (`n_neighbors = 15`, `min_dist = 0.1`; uwot's own default `min_dist` is 0.01).
+       - Their t-SNE (perplexity 100) is not reproduced: too slow on millions of cells.
+       - Silhouette is computed on `PCA` and `SCALED`.
+       - Needs the Bioconductor package `sva`; the script stops with a message if it's missing.
   - All z parameters are recomputed on the **filtered** cells (not 05's `z` assay, which includes removed cells). `PCF_FEATURES=all` uses every channel (suffix `_all_features`). `num_pcs` = panel features − 1, 12 for all; `PCF_NPCS` overrides.
   - **Steps**: PCA (`scale = F`, up to 30 components) → loadings/elbow/explanatory PCs → UMAP on the PCA → Harmony on `code` → explanatory PCs → UMAP on Harmony.
   - **UMAP plots**: `{raw,harmony}_umap_{celltype,batch,sample,group,region}.png` (celltype = `cell_type2`), plus `{raw,harmony}_umap_markers.png` (panel markers, asinh, 200k subsample). Plot titles carry the run name.
   - **Separation score**: `silhouette.csv` holds silhouette widths on up to 1000 cells per `cell_type2`, for the PCA and Harmony spaces (first `num_pcs` dims). With label `cell_type2`, higher means cell types sit further apart; with label `code`, near 0 or negative means sections are mixed. This lets methods be compared by number, not only by eye. Combine across methods with `list.files("results/09_qc_dimred", "silhouette.csv", recursive = T, full.names = T) |> map_dfr(read.csv)`.
   - Outputs: `results/09_qc_dimred/<method>/`; `data/09_qc_dimred/<method>/reduced_dims.rds` (PCA, UMAP, HARMONY, HARMONY_UMAP, rownames = `cell_id`).
-  - Job: array 1–6, b1042/genomics (the user's current choice), 16 CPUs / 128 GB / 12 h, unmeasured. **Not run** (no R in the Claude session).
+  - Job: array 1–7, b1042/genomics (the user's current choice), 16 CPUs / 128 GB / 12 h, unmeasured. **Not run** (no R in the Claude session).
 - `scripts/10_cell_geojson.py` + `jobs/10_cell_geojson.sh` (PR 41, user, 2026-11-11): **QuPath geoJSONs of the cleaned, relabelled cells** from 09's `data/09_qc_dimred/filtered_data.csv` (the bad 07 clusters and size-flagged cells are already removed there).
   - One file per layer × `cell_type2` × section: `results/10_cell_geojson/<layer>/<cell_type2>/JSB<code>_Scan<n>.er.geojson`. The file name is the qptiff's stem (scan number from `pcf_images/`); the script exits if a code has no image.
   - Layers:
