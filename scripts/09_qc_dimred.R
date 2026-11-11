@@ -49,6 +49,8 @@ pca_features <- c("TMEM119", "Olig-2", "CD3e", "CD4",
                   "NeuN", "GFAP", "Vimentin", "CD11c",
                   "Iba-1", "CD163", "CD8")
 npcs_env <- Sys.getenv("PCF_NPCS")
+# supervised UMAP (display only): weight of cell_type2 vs the data, 0-1
+sup_weight <- as.numeric(Sys.getenv("PCF_SUP_WEIGHT", "0.5"))
 
 sce <- readRDS("data/05_object_creation/spe.rds")
 
@@ -241,6 +243,14 @@ reducedDim(sce, "UMAP") <- uwot::umap(reducedDim(sce, "PCA")[, 1:num_pcs], n_nei
                                       n_threads = n_cores, n_sgd_threads = n_cores, verbose = T)
 umap_plots("UMAP", "raw")
 
+supervised_umap <- function(dimred) {
+  set.seed(1)
+  uwot::umap(reducedDim(sce, dimred)[, 1:num_pcs], n_neighbors = 15, y = sce$cell_type2,
+             target_weight = sup_weight, n_threads = n_cores, n_sgd_threads = n_cores)
+}
+reducedDim(sce, "SUP_UMAP") <- supervised_umap("PCA")
+umap_plots("SUP_UMAP", "raw_supervised")
+
 if (m$harmony) {
   sce <- RunHarmony(sce, group.by.vars = "code")
   plot_explanatory("HARMONY", "explanatory_harmony.png")
@@ -249,6 +259,8 @@ if (m$harmony) {
   reducedDim(sce, "HARMONY_UMAP") <- uwot::umap(reducedDim(sce, "HARMONY")[, 1:num_pcs], n_neighbors = 15,
                                                 n_threads = n_cores, n_sgd_threads = n_cores)
   umap_plots("HARMONY_UMAP", "harmony")
+  reducedDim(sce, "HARMONY_SUP_UMAP") <- supervised_umap("HARMONY")
+  umap_plots("HARMONY_SUP_UMAP", "harmony_supervised")
 }
 
 if (!is.null(ad_display)) {
@@ -260,7 +272,8 @@ if (!is.null(ad_display)) {
   umap_plots("AD_UMAP", "ad_display")
 }
 
-dr_names <- intersect(c("PCA", "UMAP", "HARMONY", "HARMONY_UMAP", "SCALED", "AD_UMAP"), reducedDimNames(sce))
+dr_names <- intersect(c("PCA", "UMAP", "SUP_UMAP", "HARMONY", "HARMONY_UMAP", "HARMONY_SUP_UMAP", "SCALED", "AD_UMAP"),
+                      reducedDimNames(sce))
 dims <- map(set_names(dr_names), ~ `rownames<-`(reducedDim(sce, .x), sce$cell_id))
 saveRDS(dims, paste0(data_dir, "reduced_dims.rds"))
 
