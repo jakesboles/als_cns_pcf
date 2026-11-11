@@ -124,17 +124,26 @@ Phase 1 (current): import HALO object data, annotate objects with spatial contex
       - Other options discussed with the user but not implemented: drop background-only markers per group, explicit marker weights after z, and a noise floor at 05's background threshold before log/z.
   - **Same caveats as PR 32**: use it for clustering and cell identification only. Here the per-section z is over all cell types, so a marker's SD includes the spread between types, which is what should separate them in an all-cell clustering.
   - **Job**: single job, 16 CPUs / 300 GB / 48 h since PR 36, unmeasured (the graph and Leiden run on millions of cells). Check `seff`, and whether b1169 nodes allow 240 GB. **Not run** (no R in the Claude session).
-- `scripts/09_myeloid_subtypes.R` + `jobs/09_myeloid_subtypes.sh` (PR 39, user, 2026-11-10): **microglia vs macrophage clustering of the myeloid cells**. 07 has served as QC. A later 10 will turn 09's clusters into new metadata (a remove flag or a subtype column).
-  - User decisions:
-    - Cells are the same as 07: all myeloid cells minus `flag_size`; lineage and region flags are carried along as `flag_status`, not removed.
-    - Per-section log1p z is within myeloid cells (07's default, PR 32), capped at ±10.
-    - Harmony on `code` is kept.
-  - Features (18; the user's list had SPP1 twice): Iba-1, TMEM119, CD163, CD11c, HLA-DR, CD68, CD74, GPNMB, Galectin-3, LYVE1, SPP1, STING, MMP9, Vimentin, APOC1, ApoE, PSAP, CD14. Names are checked against the SPE, and the script stops listing any it can't find (`HLA-DR`, `ApoE`, `APOC1`, `GPNMB` are spelled as in `antibody_targets`, unverified against the qptiff names; `Galectin-3` is 05's rename).
-  - `num_pcs` = 17 (features − 1); `PCF_NPCS` overrides.
-  - The rest is 07's workflow and plots unchanged: PCA (`scale = F`) → explanatory PCs → UMAP → Harmony → SNN k = 15 → Leiden 0.1/0.3/0.5/1, then per-resolution code/flag tables and presto AUROC/log2FC heatmaps (cluster vs other myeloid cells). Added: `harmony_umap_markers.png` (each feature, asinh, on the 200k subsample).
-  - Outputs: `results/09_myeloid_subtypes/`, and `data/09_myeloid_subtypes/myeloid/` (`reduced_dims*.rds`, `clusters.parquet`).
-  - 08 on it: `sbatch --export=ALL,PCF_CLUSTERS_DIR=data/09_myeloid_subtypes,PCF_OUT=results/08_cluster_montage_09/ jobs/08_cluster_montage.sh` (the myeloid `REQUIRED` markers apply).
-  - Job: single job, same account, partition and resources as the user's current 07 job (b1042/genomics, 16 CPUs / 128 GB / 12 h). **Not run** (no R in the Claude session).
+- **Reorganisation (user, 2026-11-11)**: `09_myeloid_subtypes.R` (PR 39), the prototype `myeloid_prelim.R`, `pathology_prelim.R`, `pathology_summary.R` and a first draft of `10_cell_qc_subtyping.R` are in `scripts/deprecated/` (the 09 job in `jobs/deprecated/`). The user found only the 07 runs useful for finding bad clusters and believes they are all identified now.
+- `scripts/09_qc_dimred.R` + `jobs/09_qc_dimred.sh` (user's filtering block, PR 40 for the rest, 2026-11-11): **removes bad 07 clusters, labels microglia/macrophages, and compares pre-processing methods by PCA + UMAP** (no clustering), aiming at a UMAP where cell types separate cleanly. A later script will focus on microglia.
+  - **Filtering (user)**: `remove_params` lists the 07 clusters to drop per group (`allcell` = `07_cell_clustering_allcell_z`, `withincell` = `07_cell_clustering`; resolution; cluster IDs): astrocyte leiden_1 cluster 13 (all-cell z), oligodendrocyte leiden_1 cluster 11, tcell leiden_0.3 clusters 2 and 5.
+    - Macrophages are `07_cell_clustering_group_panel_allcell_z/myeloid` leiden_1 cluster 7; other myeloid cells are labelled microglia.
+    - `cell_type2` = `Remove` / `Macrophage` / `Microglia` / the original `cell_type`.
+    - `data/09_qc_dimred/filtered_data.csv` (non-removed cells, metadata + coordinates) is written by the first array task, or by any non-array run.
+    - **Size filter added (PR 40)**: the 07 cluster tables don't contain size-flagged cells, so the user's draft would have kept them (myeloid ones as "Microglia"). `flag_size` TRUE now also gives `Remove`.
+  - **Methods** (`methods` list; `PCF_METHOD` or array task 1–6). Each is a transform, then a per-marker z over the dataset or per section (`code`), with an optional cap:
+    1. `asinh`: 05's asinh assay, z over all cells (= PCA with `scale = T` on asinh).
+    2. `dataset_z`: raw, z over all cells (Hickey 2021).
+    3. `section_z`: raw, z per section (SPACEc).
+    4. `log_dataset_z`: log1p, z over all cells, cap ±10 (new suggestion: keeps donor/disease differences while fixing the bright-tail problem of raw z).
+    5. `log_section_z`: log1p, z per section, cap ±10 (AD paper / 07b).
+    6. `asinh_section_z`: asinh, z per section, cap ±10 (new suggestion).
+  - All z parameters are recomputed on the **filtered** cells (not 05's `z` assay, which includes removed cells). `PCF_FEATURES=all` uses every channel (suffix `_all_features`). `num_pcs` = panel features − 1, 12 for all; `PCF_NPCS` overrides.
+  - **Steps**: PCA (`scale = F`, up to 30 components) → loadings/elbow/explanatory PCs → UMAP on the PCA → Harmony on `code` → explanatory PCs → UMAP on Harmony.
+  - **UMAP plots**: `{raw,harmony}_umap_{celltype,batch,sample,group,region}.png` (celltype = `cell_type2`), plus `{raw,harmony}_umap_markers.png` (panel markers, asinh, 200k subsample). Plot titles carry the run name.
+  - **Separation score**: `silhouette.csv` holds silhouette widths on up to 1000 cells per `cell_type2`, for the PCA and Harmony spaces (first `num_pcs` dims). With label `cell_type2`, higher means cell types sit further apart; with label `code`, near 0 or negative means sections are mixed. This lets methods be compared by number, not only by eye. Combine across methods with `list.files("results/09_qc_dimred", "silhouette.csv", recursive = T, full.names = T) |> map_dfr(read.csv)`.
+  - Outputs: `results/09_qc_dimred/<method>/`; `data/09_qc_dimred/<method>/reduced_dims.rds` (PCA, UMAP, HARMONY, HARMONY_UMAP, rownames = `cell_id`).
+  - Job: array 1–6, b1042/genomics (the user's current choice), 16 CPUs / 128 GB / 12 h, unmeasured. **Not run** (no R in the Claude session).
 - **Old 08/09 deleted (PR 25, user, 2026-11-07)**: `08_loadings_clustering.R` (PR 20; loadings and all-cell Leiden, superseded by 07's per-group clustering) and `09_cluster_geojson.py` (PR 22/23; per-cluster QuPath geoJSONs). Both are in git history if needed. The user prefers cell-level QC by image review (new 08) before building further on the object.
 - `scripts/08_cluster_montage.py` + `jobs/08_cluster_montage.sh` (PR 25): **HTML image review of 07's clusters**, so clusters can be judged without panning around whole slides in QuPath (user, 2026-11-07). User decisions:
   - **Channels**: for each group, take the top 4 markers enriched in **each** cluster and pool them; every cluster in that group is shown with the same pooled set of columns (no DAPI). Enrichment = cluster mean asinh minus mean asinh of all other cells in the group, computed in Python as `asinh(raw / cofactor)` from 01's raw means and 05's `marker_cofactors_thresholds.csv` (same values as the SPE's `asinh` assay; markers = 05's kept channels). Each cluster's own top 4 are highlighted in its column headers.
