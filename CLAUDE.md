@@ -144,6 +144,18 @@ Phase 1 (current): import HALO object data, annotate objects with spatial contex
   - **Separation score**: `silhouette.csv` holds silhouette widths on up to 1000 cells per `cell_type2`, for the PCA and Harmony spaces (first `num_pcs` dims). With label `cell_type2`, higher means cell types sit further apart; with label `code`, near 0 or negative means sections are mixed. This lets methods be compared by number, not only by eye. Combine across methods with `list.files("results/09_qc_dimred", "silhouette.csv", recursive = T, full.names = T) |> map_dfr(read.csv)`.
   - Outputs: `results/09_qc_dimred/<method>/`; `data/09_qc_dimred/<method>/reduced_dims.rds` (PCA, UMAP, HARMONY, HARMONY_UMAP, rownames = `cell_id`).
   - Job: array 1–6, b1042/genomics (the user's current choice), 16 CPUs / 128 GB / 12 h, unmeasured. **Not run** (no R in the Claude session).
+- `scripts/10_cell_geojson.py` + `jobs/10_cell_geojson.sh` (PR 41, user, 2026-11-11): **QuPath geoJSONs of the cleaned, relabelled cells** from 09's `data/09_qc_dimred/filtered_data.csv` (the bad 07 clusters and size-flagged cells are already removed there).
+  - One file per layer × `cell_type2` × section: `results/10_cell_geojson/<layer>/<cell_type2>/JSB<code>_Scan<n>.er.geojson`. The file name is the qptiff's stem (scan number from `pcf_images/`); the script exits if a code has no image.
+  - Layers:
+    - `cell_type`: every cell.
+    - `ptdp_positive`: `has_ptdp` TRUE (03's 5% rule).
+    - `dpr_positive`: `has_dpr` TRUE.
+    - `tcell_not_touching_vessel`: cd4/cd8 T cells with `dist_vessel_um > 0`. NA (no vessel annotation for that image) is excluded.
+  - Each cell is a QuPath detection with `name` = `cell_id`, class = `cell_type2` plus a layer suffix (` pTDP+`, ` DPR+`, ` off vessel`) and one colour per cell type, and measurements `area_um2` and `dist_vessel_um` (omitted when NA, since NaN isn't valid JSON).
+  - Empty combinations write no file. `cell_counts.csv` lists every code × layer × type count, zeros included.
+  - Outlines come from `annotations/cells/` via `pcf_utils.load_cell_geoms`, as in 06.
+  - Job: like 06 (b1169, 8 CPUs / 64 GB / 2 h, `pcf_quant` env, `PCF_CODE` to restrict).
+  - **Synthetic test** (Claude session): 2 images (Scan1 and Scan2), 6 HALO types, myeloid split into Macrophage/Microglia, random pTDP/DPR/vessel values including NA. All 418 written features had the right layer, type, criterion and file name (0 mismatches), the totals matched the expected counts, and the files contain no NaN.
 - **Old 08/09 deleted (PR 25, user, 2026-11-07)**: `08_loadings_clustering.R` (PR 20; loadings and all-cell Leiden, superseded by 07's per-group clustering) and `09_cluster_geojson.py` (PR 22/23; per-cluster QuPath geoJSONs). Both are in git history if needed. The user prefers cell-level QC by image review (new 08) before building further on the object.
 - `scripts/08_cluster_montage.py` + `jobs/08_cluster_montage.sh` (PR 25): **HTML image review of 07's clusters**, so clusters can be judged without panning around whole slides in QuPath (user, 2026-11-07). User decisions:
   - **Channels**: for each group, take the top 4 markers enriched in **each** cluster and pool them; every cluster in that group is shown with the same pooled set of columns (no DAPI). Enrichment = cluster mean asinh minus mean asinh of all other cells in the group, computed in Python as `asinh(raw / cofactor)` from 01's raw means and 05's `marker_cofactors_thresholds.csv` (same values as the SPE's `asinh` assay; markers = 05's kept channels). Each cluster's own top 4 are highlighted in its column headers.
