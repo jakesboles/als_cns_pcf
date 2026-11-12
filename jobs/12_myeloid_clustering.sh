@@ -1,6 +1,6 @@
 #!/bin/bash
-#SBATCH --account b1042
-#SBATCH --partition genomics
+#SBATCH --account b1169
+#SBATCH --partition b1169
 #SBATCH --job-name 12_myeloid_clustering
 #SBATCH --array 1-2
 #SBATCH --nodes 1
