@@ -155,6 +155,13 @@ Phase 1 (current): import HALO object data, annotate objects with spatial contex
   - **Separation score**: `silhouette.csv` holds silhouette widths on up to 1000 cells per `cell_type2`, for the PCA and Harmony spaces (first `num_pcs` dims). With label `cell_type2`, higher means cell types sit further apart; with label `code`, near 0 or negative means sections are mixed. This lets methods be compared by number, not only by eye. Combine across methods with `list.files("results/09_qc_dimred", "silhouette.csv", recursive = T, full.names = T) |> map_dfr(read.csv)`.
   - Outputs: `results/09_qc_dimred/<method>/`; `data/09_qc_dimred/<method>/reduced_dims.rds` (PCA, UMAP, HARMONY, HARMONY_UMAP, rownames = `cell_id`).
   - Job: array 1–7, b1042/genomics (the user's current choice), 16 CPUs / 128 GB / 12 h, unmeasured. **Not run** (no R in the Claude session).
+- `scripts/11_myeloid_dimred.R` + `jobs/11_myeloid_dimred.sh` (PR 44, user, 2026-11-12): **09's method comparison for myeloid cells only** (Microglia + Macrophage), mainly for a figure UMAP.
+  - **Cells**: the `cell_id`s that 09's `data/09_qc_dimred/filtered_data.csv` keeps with `cell_type2` Microglia or Macrophage, so the bad-cluster and size filtering are inherited. The script stops if the counts don't match the SPE. Run 09 first.
+  - **Panel**: the 18-marker microglia/macrophage list from the deprecated myeloid 09 (Iba-1, TMEM119, CD163, CD11c, HLA-DR, CD68, CD74, GPNMB, Galectin-3, LYVE1, SPP1, STING, MMP9, Vimentin, APOC1, ApoE, PSAP, CD14) instead of 09's 11-marker lineage panel, because T cell / neuron / oligodendrocyte markers are only background here. `PCF_FEATURES=all` uses every channel. `num_pcs` defaults to 17.
+  - **Same seven methods, Harmony, supervised UMAPs and plots as 09.** All z parameters are computed over myeloid cells only ("within myeloid", the scope that separated macrophages from microglia in PR 32).
+  - Silhouette uses up to 5000 cells per type (only two types).
+  - Outputs: `results|data/11_myeloid_dimred/<method>/`.
+  - Job: array 1–7, b1042/genomics, 16 CPUs / 128 GB / 6 h (each task still loads the full SPE), unmeasured. **Not run** (no R in the Claude session).
 - `scripts/10_cell_geojson.py` + `jobs/10_cell_geojson.sh` (PR 41, user, 2026-11-11): **QuPath geoJSONs of the cleaned, relabelled cells** from 09's `data/09_qc_dimred/filtered_data.csv` (the bad 07 clusters and size-flagged cells are already removed there).
   - One file per layer × `cell_type2` × section: `results/10_cell_geojson/<layer>/<cell_type2>/JSB<code>_Scan<n>.er.geojson`. The file name is the qptiff's stem (scan number from `pcf_images/`); the script exits if a code has no image.
   - Layers:
