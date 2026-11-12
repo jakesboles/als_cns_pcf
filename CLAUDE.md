@@ -162,6 +162,14 @@ Phase 1 (current): import HALO object data, annotate objects with spatial contex
   - Silhouette uses up to 5000 cells per type (only two types).
   - Outputs: `results|data/11_myeloid_dimred/<method>/`.
   - Job: array 1–7, b1042/genomics, 16 CPUs / 128 GB / 6 h (each task still loads the full SPE), unmeasured. **Not run** (no R in the Claude session).
+- `scripts/12_myeloid_clustering.R` + `jobs/12_myeloid_clustering.sh` (PR 45, user, 2026-11-12): **Leiden clustering of 11's Harmony embeddings** for myeloid cells.
+  - Runs `log_section_z` and `dataset_z` by default (array 1–2, the user's interest). Any other 11 output folder can be clustered with `PCF_METHOD=<folder>` (e.g. `asinh_section_z`, `log_section_z_all_features`). It stops if the folder has no Harmony (`ad_combat`).
+  - **Input**: `HARMONY` / `HARMONY_UMAP` from `data/11_myeloid_dimred/<run>/reduced_dims.rds`. `num_pcs` uses 11's default (features − 1, or 12 for `_all_features`); `PCF_NPCS` overrides.
+  - Cells and metadata come from the SPE, matched by `cell_id`; `cell_type2` comes from 09's `filtered_data.csv`.
+  - **Clustering**: SNN k = 15 + Leiden at 0.1/0.2/0.3/0.5/1, as in 07.
+  - **QC per resolution**: `leiden_<res>_umap.png` (on 11's Harmony UMAP); `_<var>_counts.csv` and `_<var>_fraction.png` for code, batch, group, region and `cell_type2` (fraction of each cluster); `_code_by_cluster_fraction.png` (each section's cells spread over clusters); presto AUROC / log2FC (`_markers.csv`, `_markers_auc_log2fc.png`, all channels on asinh, cluster vs other myeloid cells).
+  - **Outputs**: `results/12_myeloid_clustering/<run>/`; `data/12_myeloid_clustering/<run>/myeloid/clusters.parquet` (`cell_id`, `cell_type` = `cell_type2`, `leiden_*`). The group folder is named `myeloid`, so 08 works with `PCF_CLUSTERS_DIR=data/12_myeloid_clustering/<run>,PCF_OUT=results/08_cluster_montage_12/<run>/` and uses the myeloid `REQUIRED` markers.
+  - Job: b1042/genomics, 16 CPUs / 128 GB / 6 h, unmeasured. **Not run** (no R in the Claude session).
 - `scripts/10_cell_geojson.py` + `jobs/10_cell_geojson.sh` (PR 41, user, 2026-11-11): **QuPath geoJSONs of the cleaned, relabelled cells** from 09's `data/09_qc_dimred/filtered_data.csv` (the bad 07 clusters and size-flagged cells are already removed there).
   - One file per layer × `cell_type2` × section: `results/10_cell_geojson/<layer>/<cell_type2>/JSB<code>_Scan<n>.er.geojson`. The file name is the qptiff's stem (scan number from `pcf_images/`); the script exits if a code has no image.
   - Layers:
