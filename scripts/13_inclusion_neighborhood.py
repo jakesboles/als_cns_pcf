@@ -48,10 +48,10 @@ def regions_of(code, region_files):
   return regs
 
 
-def section(code, cells, feature_files, region_files, px_um, radii):
-  regs = regions_of(code, region_files)
+def section(code, cells, feature_files, region_files, px_um, radii, keep_regions):
+  regs = {r: g for r, g in regions_of(code, region_files).items() if r in keep_regions}
   if not regs:
-    log(f"WARNING {code}: no region annotations; skipped")
+    log(f"WARNING {code}: no {'/'.join(keep_regions)} annotation; skipped")
     return [], []
   cells = cells[cells["region"].isin(list(regs))].reset_index(drop=True)
   pts = shapely.points(cells["x"].to_numpy(), cells["y"].to_numpy())
@@ -115,6 +115,7 @@ def section(code, cells, feature_files, region_files, px_um, radii):
       inc_region[shapely.contains_xy(rg, shapely.get_x(cen), shapely.get_y(cen))] = rname
     meta = pd.DataFrame({"inclusion": np.arange(len(feats)), "inclusion_area_um2": shapely.area(feats) * px_um ** 2,
                          "inclusion_region": inc_region, "x": shapely.get_x(cen), "y": shapely.get_y(cen)})
+    meta = meta[meta["inclusion_region"] != "outside"]
     rc = meta.merge(rc, on="inclusion", how="left")
     rc.insert(0, "label", label)
     rc.insert(0, "code", code)
@@ -125,7 +126,7 @@ def section(code, cells, feature_files, region_files, px_um, radii):
 
 def worker(code, args, cells, feature_files, region_files, px_um):
   try:
-    return section(code, cells, feature_files, region_files, px_um, args.radii)
+    return section(code, cells, feature_files, region_files, px_um, args.radii, args.regions)
   except Exception as e:
     log(f"ERROR {code}: {e}")
     raise
@@ -139,11 +140,14 @@ def main():
   p.add_argument("--pathology_dir", default="annotations/pathology")
   p.add_argument("--region_dir", default="annotations/region")
   p.add_argument("--radii", type=float, nargs="+", default=[10, 25, 50, 100])
+  # inclusions are essentially absent from WM, so GM only by default
+  p.add_argument("--regions", nargs="+", default=["GM"])
   p.add_argument("--px_um", type=float)
   p.add_argument("--data_dir", default="data/13_inclusion_neighborhood/")
   p.add_argument("--workers", type=int, default=int(os.environ.get("SLURM_CPUS_PER_TASK", 1)))
   args = p.parse_args()
   args.radii = sorted(int(r) if float(r).is_integer() else r for r in args.radii)
+  args.regions = [r.upper() for r in args.regions]
 
   os.makedirs(args.data_dir, exist_ok=True)
   if not os.path.exists(args.cells):
@@ -160,7 +164,7 @@ def main():
   unknown = set(codes) - set(cells["code"])
   if unknown:
     sys.exit(f"Codes not in {args.cells}: {', '.join(sorted(unknown))}")
-  log(f"{len(codes)} sections, {len(cells)} cells, labels {', '.join(sorted(feature_files))}, radii {args.radii} um")
+  log(f"{len(codes)} sections, {len(cells)} cells, labels {', '.join(sorted(feature_files))}, radii {args.radii} um, regions {', '.join(args.regions)}")
 
   px = {}
   for c in codes:

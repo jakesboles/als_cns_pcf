@@ -11,7 +11,7 @@
 
 # all sections in 09 filtered_data.csv: sbatch jobs/13_inclusion_neighborhood.sh
 # selected sections: sbatch --export=ALL,PCF_CODE="160-1 160-2" jobs/13_inclusion_neighborhood.sh
-# other radii (um): add PCF_RADII="5 15 30 60"
+# other radii (um): add PCF_RADII="5 15 30 60"; regions other than GM: PCF_REGIONS="GM WM"
 
 cd /gpfs/projects/b1169/boles/als_cns_pcf
 
@@ -25,4 +25,4 @@ eval "$(conda shell.bash hook)"
 conda activate "$ENV" || { echo "Could not activate $ENV"; exit 1; }
 "$PY" -c "import sys, numpy; print(sys.executable, numpy.__version__)" || exit 1
 
-"$PY" scripts/13_inclusion_neighborhood.py --workers "$SLURM_CPUS_PER_TASK" ${PCF_CODE:+--codes $PCF_CODE} ${PCF_RADII:+--radii $PCF_RADII}
+"$PY" scripts/13_inclusion_neighborhood.py --workers "$SLURM_CPUS_PER_TASK" ${PCF_CODE:+--codes $PCF_CODE} ${PCF_RADII:+--radii $PCF_RADII} ${PCF_REGIONS:+--regions $PCF_REGIONS}
