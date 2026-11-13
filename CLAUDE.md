@@ -170,6 +170,30 @@ Phase 1 (current): import HALO object data, annotate objects with spatial contex
   - **QC per resolution**: `leiden_<res>_umap.png` (on 11's Harmony UMAP); `_<var>_counts.csv` and `_<var>_fraction.png` for code, batch, group, region and `cell_type2` (fraction of each cluster); `_code_by_cluster_fraction.png` (each section's cells spread over clusters); presto AUROC / log2FC (`_markers.csv`, `_markers_auc_log2fc.png`, all channels on asinh, cluster vs other myeloid cells).
   - **Outputs**: `results/12_myeloid_clustering/<run>/`; `data/12_myeloid_clustering/<run>/myeloid/clusters.parquet` (`cell_id`, `cell_type` = `cell_type2`, `leiden_*`). The group folder is named `myeloid`, so 08 works with `PCF_CLUSTERS_DIR=data/12_myeloid_clustering/<run>,PCF_OUT=results/08_cluster_montage_12/<run>/` and uses the myeloid `REQUIRED` markers.
   - Job: b1042/genomics, 16 CPUs / 128 GB / 6 h, unmeasured. **Not run** (no R in the Claude session).
+- `scripts/13_inclusion_neighborhood.py` + `jobs/13_inclusion_neighborhood.sh` (PR 46, user, 2026-11-13): **cell make-up around pTDP-43 and DPR inclusions**. The question: does the spatial arrangement of cell types around inclusions differ between sALS and C9-ALS, and between DPR and pTDP? The user notes pTDP burden doesn't differ between sALS and C9 here.
+  - **Inputs**:
+    - Cells: 09's `filtered_data.csv` (`cell_type2`, so microglia/macrophages split and bad clusters removed; centroids; `has_<label>`; `region`; `group`; `sample_id`).
+    - Features: every subfolder of `annotations/pathology/` (`ptdp`, `dpr`).
+    - Regions: `annotations/region/` (GM/WM; GM first, and later regions exclude earlier ones, so the sc nesting also works).
+    - Pixel size: from 01 as in 04 (`--px_um` overrides).
+  - Distances are **cell centroid → feature edge** (0 = centroid inside the inclusion). Rings default to 0 / 0–10 / 10–25 / 25–50 / 50–100 / >100 µm (`--radii`, `PCF_RADII`).
+  - Only cells in GM or WM are used; the other region values are dropped.
+  - **`band_counts.csv`** (one row per section × label × region × band × cell type), cell-centred:
+    - Each cell is binned by its distance to the **nearest** feature of that label, so there's no double counting.
+    - `band_area_um2`: area of that distance band (nested unions of feature buffers, `quad_segs = 32`) clipped to the region.
+    - `exp_label` = cells in band × the type's fraction in that section-region: the exact expectation under **random relabelling**, so no simulation is needed. `oe_label` = observed / expected; it controls for local cell density.
+    - `exp_area` / `oe_area`: the same against uniform density over the region's area.
+    - `n_positive`: how many of those cells carry that inclusion themselves (`has_<label>`), so inclusion-bearing hosts (mostly neurons in ring 0) can be separated.
+    - Also `n_cells`, `n_band`, `n_type_region`, `n_region`, `group`, `sample_id`.
+  - **`inclusion_ring_counts.parquet`**, inclusion-centred:
+    - One row per inclusion × ring × cell type, counting every cell within the largest radius of that inclusion. This is not exclusive: nearby inclusions share cells.
+    - Also inclusion area, centroid and region (`outside` if the centroid falls in neither). Inclusions with no cells nearby have NA ring.
+  - **Synthetic test** (Claude session): 2 sections, GM/WM boxes, 15 pTDP and 8 DPR features, 12k cells with random types and NA/TRUE/FALSE flags.
+    - Band counts and positives matched a brute-force Shapely calculation (0 mismatches).
+    - Band areas were within 0.6% of a 1 px grid estimate.
+    - Per-inclusion counts matched brute force for all 38 inclusions, after padding the query buffer by 2% (polygonal buffers sit slightly inside the true distance and had missed cells at ~99.9 µm).
+  - **Stats plan (not yet written)**: one value per section (e.g. `oe_label` per ring × type × label × region), compared sALS vs C9 with lm/limma or a mixed model with donor. Sections and donors are the replicates, not inclusions; brain has 8 sALS and 4 C9 sections. DPR only exists in C9 sections, so the DPR vs pTDP comparison is within C9.
+  - Job: b1169, 8 CPUs / 32 GB / 2 h, unmeasured; expected to run in about 5–20 min. **Not run on real data.**
 - `scripts/10_cell_geojson.py` + `jobs/10_cell_geojson.sh` (PR 41, user, 2026-11-11): **QuPath geoJSONs of the cleaned, relabelled cells** from 09's `data/09_qc_dimred/filtered_data.csv` (the bad 07 clusters and size-flagged cells are already removed there).
   - One file per layer × `cell_type2` × section: `results/10_cell_geojson/<layer>/<cell_type2>/JSB<code>_Scan<n>.er.geojson`. The file name is the qptiff's stem (scan number from `pcf_images/`); the script exits if a code has no image.
   - Layers:
