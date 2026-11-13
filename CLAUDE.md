@@ -177,7 +177,11 @@ Phase 1 (current): import HALO object data, annotate objects with spatial contex
     - Regions: `annotations/region/` (GM/WM; GM first, and later regions exclude earlier ones, so the sc nesting also works).
     - Pixel size: from 01 as in 04 (`--px_um` overrides).
   - Distances are **cell centroid → feature edge** (0 = centroid inside the inclusion). Rings default to 0 / 0–10 / 10–25 / 25–50 / 50–100 / >100 µm (`--radii`, `PCF_RADII`).
-  - Only cells in GM or WM are used; the other region values are dropped.
+  - **GM only (PR 47, user, 2026-11-13)**: inclusions are effectively absent from WM, so `--regions` (`PCF_REGIONS`) defaults to `GM`.
+    - Only GM cells are counted, and ring areas are clipped to GM.
+    - The per-inclusion table keeps only inclusions whose centroid is in GM. WM inclusions near the boundary still count when finding a GM cell's nearest inclusion.
+    - `PCF_REGIONS="GM WM"` restores PR 46's behaviour.
+    - Synthetic retest: GM-only band counts and all 19 GM inclusions matched brute force (0 mismatches).
   - **`band_counts.csv`** (one row per section × label × region × band × cell type), cell-centred:
     - Each cell is binned by its distance to the **nearest** feature of that label, so there's no double counting.
     - `band_area_um2`: area of that distance band (nested unions of feature buffers, `quad_segs = 32`) clipped to the region.
