@@ -8,6 +8,8 @@ suppressPackageStartupMessages({
 
 setwd("/projects/b1169/boles/als_cns_pcf")
 
+source("../als_cns_scrnaseq/r_scripts/plot_theme.R")
+
 # Prep demographics and joining key ---------------------------------------
 
 key <- read.csv("sample_key.csv")
@@ -62,7 +64,7 @@ df <- df %>%
   left_join(key,
             by = "code")
 
-{roi <- "ptdp"
+{roi <- "dpr"
   
   df %>% 
     filter(feature == roi) %>%
@@ -76,7 +78,7 @@ df <- df %>%
                fill = group)) +
     geom_quasirandom(shape = 21,
                      show.legend = F,
-                     size = 5,
+                     size = 4,
                      alpha = 0.7) +
     stat_summary(fun = mean,
                  geom = "crossbar",
@@ -87,17 +89,26 @@ df <- df %>%
                  width = 0.5, 
                  linewidth = 1.2,
                  show.legend = F) +
-    scale_fill_manual(values = c("#b8b0a8", "#CC00FF", "#0CAA00")) +
-    geom_pwc(method = "wilcox_test",
-             hide.ns = F,
-             # step.increase = step_increase,
-             label = "{p.adj.signif}") +
+    scale_fill_manual(values = c("#b8b0a8", "#0CAA00", "#CC00FF")) +
+    geom_pwc(method = "tukey_hsd",
+             hide.ns = T,
+             label = "p.signif",
+             label.size = 4,
+             tip.length = 0,
+             vjust = 0.5,
+             step.increase = 0.05) +
     # ggtitle(roi) +
     # ggtitle("DPR inclusions") +
-    ggtitle("pTDP-43 inclusions") +
+    ggtitle("DPR inclusions") +
     labs(y = "% area") +
   facet_wrap(. ~ tissue) +
-  theme_linedraw(base_size = 16) + 
+  theme_linedraw() +
+    theme_als_project(base_size = 15) +
+    rotate_x_text(30) +
     theme(axis.title.x = element_blank(),
           plot.title = element_text(hjust = 0.5))
+  
+ggsave(filename = paste0("results/sfn_figs/", roi, "_burden.png"),
+       units = "in", dpi = 600,
+       height = 3.5, width = 8)
   }

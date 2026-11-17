@@ -6,6 +6,10 @@ suppressPackageStartupMessages({
   library(dittoSeq)
   library(paletteer)
   library(speckle)
+  library(presto)
+  library(ggrepel)
+  library(ggbeeswarm)
+  library(ggpubr)
 })
 setwd("/projects/b1169/boles/als_cns_pcf")
 
@@ -129,6 +133,9 @@ de_full <- full_join(de_c9,
                      de_sals,
                      by = "feature")
 
+de_full %>% 
+  arrange(desc(c9_fc))
+
 label_features <- de_full %>%
   mutate(magnitude = sqrt(sals_fc^2 + c9_fc^2),
          sig_group = if_else(c9_fc > 0 | sals_fc > 0, "up", "down")) %>%
@@ -147,7 +154,7 @@ de_full %>%
              color = "gray60") +
   geom_point(fill = "dodgerblue",
              shape = 21,
-             size = 2) + 
+             size = 4) + 
   geom_label_repel(data = label_features,
                    aes(label = feature),
                    show.legend = FALSE,
@@ -208,4 +215,55 @@ dist_tab %>%
                values_to = "distance") %>% 
   ggplot(aes(x = feature,
              y = distance)) + 
-  geom_violin() + 
+  geom_violin()
+
+
+colData(spe) %>% 
+  as.data.frame() %>% 
+  filter(cell_type2 == "Microglia" & region %in% c("GM", "WM")) %>% 
+  group_by(code, group, region) %>% 
+  summarize(n = n()) %>% 
+  pivot_wider(names_from = "region",
+              values_from = "n") %>% 
+  mutate(GM_pct = GM / (GM + WM),
+         WM_pct = WM / (GM + WM)) %>% 
+  ggplot(aes(x = group,
+             y = WM_pct)) + 
+  stat_summary(fun = mean,
+               geom = "crossbar") +
+  geom_pwc() +
+  geom_quasirandom() + 
+  theme_linedraw() + 
+  theme_als_project()
+
+colData(spe) %>% 
+  as.data.frame() %>% 
+  filter(cell_type2 == "Microglia" & region %in% c("GM") & group != "Control") %>% 
+  mutate(tdp_touch = if_else(dist_ptdp_um == 0, "Y", "N")) %>%
+  group_by(code, group, tdp_touch) %>% 
+  summarize(n = n()) %>% 
+  pivot_wider(names_from = "tdp_touch",
+              values_from = "n") %>% 
+  mutate(pct = Y / (N + Y)) %>%
+  ggplot(aes(x = group,
+             y = pct)) + 
+  stat_summary(fun = mean,
+               geom = "crossbar") +
+  geom_pwc() +
+  geom_quasirandom() + 
+  theme_linedraw() + 
+  theme_als_project()
+
+colData(spe)  %>%
+  as.data.frame() %>% 
+  filter(cell_type2 == "Microglia" & region %in% c("GM") & group != "Control") %>%
+  group_by(code, group) %>% 
+  summarize(med = median(dist_ptdp_um)) %>% 
+  ggplot(aes(x = group,
+             y = med)) +
+  stat_summary(fun = mean,
+               geom = "crossbar") +
+  geom_pwc() +
+  geom_quasirandom() + 
+  theme_linedraw() + 
+  theme_als_project()
