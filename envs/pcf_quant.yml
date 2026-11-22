@@ -13,3 +13,4 @@ dependencies:
   - imagecodecs
   - pyarrow
   - matplotlib
+  - scipy
