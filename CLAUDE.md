@@ -219,8 +219,11 @@ Phase 1 (current): import HALO object data, annotate objects with spatial contex
     - Tested in the Claude session with `uv` + Python 3.12: installs and imports (scimap 2.4.1, scanpy 1.12.6, anndata 0.13.4, numpy 2.5.5, pandas 3.1.1). The mamba step itself was not run.
   - **15** (run in the scimap env) writes `data/15_scimap_anndata/cells.h5ad` from 09's `filtered_data.csv`:
     - `obs`: every 09 column (strings as categories, `has_*` as nullable boolean), plus scimap's default names: `X_centroid`/`Y_centroid` in **µm** (pixel size per section from 01), `imageid` = `code`, `phenotype` = `cell_type2`. `obsm["spatial"]` = µm coordinates for scanpy/squidpy. `x`/`y` stay in px.
-    - `X` = asinh(raw / cofactor) for 05's kept markers (`marker_cofactors_thresholds.csv`), from 01's raw means with the same `Mac2/Galectin-3` rename as 05/08; stops if a cell or channel is missing. `PCF_RAW_LAYER=1` adds `layers["raw"]`; `PCF_NO_INTENSITIES=1` writes positions and labels only.
-    - Synthetic test: asinh and raw values matched 01 exactly (0 mismatches), µm coordinates and labels correct, NA in `has_ptdp` preserved.
+    - Intensities (**log1p, not asinh: user, 2026-11-23, PR 50**), for 05's kept markers (the `marker` column of `marker_cofactors_thresholds.csv`; cofactors are no longer used here), from 01's raw means with the same `Mac2/Galectin-3` rename as 05/08; stops if a cell or channel is missing:
+      - `X` = log1p(max(raw, 0)).
+      - `layers["log_dataset_z"]` = `X` z-scored per marker over **all cells in the file** (every section and region), capped at ±10 (`--z_cap`): 09's `log_dataset_z` recipe. Means and SDs are in `var` (`log1p_mean`, `log1p_sd`).
+      - `PCF_RAW_LAYER=1` adds `layers["raw"]`; `PCF_NO_INTENSITIES=1` writes positions and labels only.
+    - Synthetic test: log1p values matched 01 exactly (0 mismatches), the z layer matched a float64 recomputation (max error 5e-7), µm coordinates and labels correct, NA in `has_ptdp` preserved; the no-intensity option still works.
   - **Notebook** `notebooks/scimap_spatial.ipynb` (kernel "Python (scimap)"; `REGION`, `RADIUS` µm and `N_PERM` set at the top; `PCF_PROJECT` env var overrides the project path). Writes `results/15_scimap/<region>/`:
     - Composition per section (`stacked_barplot`).
     - A: `sm.tl.spatial_distance` + heatmap; `nearest_distance_medians.csv` (median per section × from × to type).
