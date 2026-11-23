@@ -1,0 +1,10 @@
+name: scimap
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - ipykernel
+  - pyarrow
+  - pip:
+    - scimap==2.4.1
