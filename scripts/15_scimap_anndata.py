@@ -37,20 +37,20 @@ def main():
   p = argparse.ArgumentParser()
   p.add_argument("--cells", default="data/09_qc_dimred/filtered_data.csv")
   p.add_argument("--quant_dir", default="data/01_quantify_cells/")
-  p.add_argument("--cofactors", default="results/05_object_creation/marker_cofactors_thresholds.csv")
+  p.add_argument("--markers", default="results/05_object_creation/marker_cofactors_thresholds.csv")
+  p.add_argument("--z_cap", type=float, default=10)
   p.add_argument("--out", default="data/15_scimap_anndata/cells.h5ad")
   p.add_argument("--no_intensities", action="store_true")
   p.add_argument("--raw_layer", action="store_true")
   p.add_argument("--workers", type=int, default=int(os.environ.get("SLURM_CPUS_PER_TASK", 1)))
   args = p.parse_args()
 
-  for f in [args.cells, args.cofactors]:
+  for f in [args.cells, args.markers]:
     if not os.path.exists(f):
       sys.exit(f"{f} not found")
   obs = pd.read_csv(args.cells, dtype={"code": str}, low_memory=False)
-  cof = pd.read_csv(args.cofactors)
-  markers = cof["marker"].tolist()
-  cofactor = cof["cofactor"].to_numpy(np.float32)
+  # 05's kept channels
+  markers = pd.read_csv(args.markers)["marker"].tolist()
   codes = sorted(obs["code"].unique())
   log(f"{len(obs)} cells, {len(codes)} sections, {len(markers)} markers")
 
@@ -73,15 +73,18 @@ def main():
   obs.index = obs["cell_id"].astype(str).to_numpy()
 
   if args.no_intensities:
-    X, layers = np.zeros((len(obs), 0), np.float32), {}
+    X, layers, var = np.zeros((len(obs), 0), np.float32), {}, None
   else:
     raw = np.vstack([res[c][1] for c in codes])
-    X = np.arcsinh(raw / cofactor).astype(np.float32)
-    layers = {"raw": raw} if args.raw_layer else {}
-  adata = ad.AnnData(X=X, obs=obs, var=pd.DataFrame({"cofactor": cofactor}, index=markers) if X.shape[1] else None,
-                     layers=layers)
+    X = np.log1p(np.maximum(raw, 0))
+    mu, sd = X.mean(axis=0, dtype=np.float64), X.std(axis=0, dtype=np.float64)
+    sd[~(sd > 0)] = 1
+    z = np.clip((X - mu.astype(np.float32)) / sd.astype(np.float32), -args.z_cap, args.z_cap)
+    layers = {"log_dataset_z": z, **({"raw": raw} if args.raw_layer else {})}
+    var = pd.DataFrame({"log1p_mean": mu, "log1p_sd": sd}, index=markers)
+  adata = ad.AnnData(X=X, obs=obs, var=var, layers=layers)
   adata.obsm["spatial"] = obs[["X_centroid", "Y_centroid"]].to_numpy()
-  adata.uns["units"] = "X_centroid/Y_centroid and obsm['spatial'] in um; x/y in px; X = asinh(raw / cofactor)"
+  adata.uns["units"] = "X_centroid/Y_centroid and obsm['spatial'] in um; x/y in px; X = log1p(max(raw, 0)); layers['log_dataset_z'] = X z-scored per marker over all cells, capped at +-z_cap"
   os.makedirs(os.path.dirname(args.out), exist_ok=True)
   adata.write_h5ad(args.out)
   log(f"wrote {args.out}: {adata.n_obs} cells x {adata.n_vars} markers")
